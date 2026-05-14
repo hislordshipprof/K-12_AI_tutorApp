@@ -1,40 +1,49 @@
-"""Q&A endpoint — Server-Sent Events stream of Gemini text.
+"""Q&A endpoint — Server-Sent Events stream of Aria's Socratic response.
 
-The system prompt establishes "Aria", a Socratic tutor that *guides* the
-student rather than answering directly. Later agents can swap this for a
-LangGraph multi-step plan; the SSE envelope stays the same.
+Wired through the stateful ``TutorAgent`` (Phase 3+):
 
-SSE event protocol:
-    data: {"type":"token","content":"…"}\n\n
-    data: {"type":"done"}\n\n
-    data: {"type":"error","message":"…"}\n\n
+    Client → POST /v1/sessions/{session_id}/qa
+         ←  SSE: data: {"type":"token","content":"…"}
+         ←  SSE: data: {"type":"done"}
+         ←  SSE: data: {"type":"error","message":"…"}
+
+Behaviour change vs. the earlier stub:
+    * ``TutorAgent.handle_question`` loads / persists ``agent_state``.
+    * Aria's responses are guided by the session context (topic, history,
+      hint level, student signals) — see ``app.agents.prompts``.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
+from app.agents.tutor import TutorAgent, get_tutor
 from app.core.logging import get_logger
 from app.core.security import get_current_user
-from app.models.schemas import QARequest
-from app.services.gemini import GeminiService, get_gemini
 
 router = APIRouter(tags=["qa"])
 log = get_logger(__name__)
 
 
-ARIA_SYSTEM_PROMPT = (
-    "You are Aria, a Socratic high school physics tutor. "
-    "Never give the answer directly — guide the student with questions and hints. "
-    "Break complex ideas into small steps. Praise effort, not innate ability. "
-    "When the student is stuck, offer the *smallest* useful nudge."
-)
+class QAStreamRequest(BaseModel):
+    """Body for the stateful Q&A streaming endpoint."""
+
+    question: str = Field(min_length=1, max_length=4000)
+    source: Literal["text", "voice", "sketch"] = "text"
+    topic_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional topic_id hint — used only when the agent is "
+            "initialising state for a brand-new session."
+        ),
+    )
 
 
 def _sse(payload: dict[str, Any]) -> str:
@@ -44,18 +53,28 @@ def _sse(payload: dict[str, Any]) -> str:
 @router.post("/sessions/{session_id}/qa")
 async def ask_question(
     session_id: UUID,
-    body: QARequest,
-    _user: Annotated[dict[str, Any], Depends(get_current_user)],
-    gemini: Annotated[GeminiService, Depends(get_gemini)],
+    body: QAStreamRequest,
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    tutor: Annotated[TutorAgent, Depends(get_tutor)],
 ) -> StreamingResponse:
-    """Stream Aria's Socratic response as Server-Sent Events."""
+    """Stream Aria's Socratic reply, then persist the turn to session state."""
+
+    user_id = str(user.get("sub") or "")
 
     async def event_stream() -> AsyncGenerator[bytes, None]:
-        log.info("qa_start", session_id=str(session_id), source=body.source)
+        log.info(
+            "qa_start",
+            session_id=str(session_id),
+            user_id=user_id,
+            source=body.source,
+        )
         try:
-            async for token in gemini.stream_text(
-                prompt=body.question,
-                system=ARIA_SYSTEM_PROMPT,
+            async for token in tutor.handle_question(
+                session_id=session_id,
+                user_id=user_id,
+                question=body.question,
+                source=body.source,
+                topic_id=body.topic_id,
             ):
                 yield _sse({"type": "token", "content": token}).encode("utf-8")
             yield _sse({"type": "done"}).encode("utf-8")

@@ -74,11 +74,41 @@ Updated continuously during the autonomous overnight build.
 - pnpm typecheck/build/start all clean; all 4 routes return HTTP 200
 - Dashboard uses TanStack Query for /v1/courses with fallback to local data
 
-### 🟡 Agent S3 — Classroom + Q&A + Quiz + Complete + sketch/voice/reactions
-- Heaviest scope — still ramping up
-- Will produce ~14 components + 3 routes + 5 hooks
+### ✅ Agent S3 — Classroom + Q&A + Quiz + Complete + sketch/voice/reactions — DONE
+- 14 components: whiteboard-svg (8-step chalk SVG), qa-answer-svg, sketch-layer (perfect-freehand), sketch-toolbar, reactions-cluster, reply-bar, peer-presence, voice-mode, voice-bar, waveform, qa-overlay (streaming), quiz-me-pop, caption-bar, classroom-shell (572 LoC orchestrator)
+- 5 hooks: use-speak, use-listen, use-socratic-aria, use-sketch-recognition, use-session
+- 3 routes: classroom/[topicId], classroom/quiz/[topicId], classroom/complete/[sessionId] (split into Server Component thin wrappers + Client islands)
+- lib/sse.ts — POST-based SSE helper w/ Supabase bearer injection
+- Q&A SSE end-to-end wired (token stream → caption append in real time)
+- Sketch upload wired (fire-and-forget for A2 to complete)
+- Voice mode → Q&A integration wired
+- pnpm typecheck/lint/build all clean
 
-## Phase 3 — AI agent layer (queued)
+## ✅ Phase 2 fully verified end-to-end
+All 9 routes return HTTP 200 in `pnpm start` smoke:
+- `/` (Landing), `/onboarding`, `/dashboard`, `/planner`, `/notes`, `/history`
+- `/classroom/wave-properties-anatomy`
+- `/classroom/quiz/wave-properties-anatomy`
+- `/classroom/complete/test-session`
+
+Verifier fixes applied during this phase:
+- Build memory: `NODE_OPTIONS='--max-old-space-size=4096'` baked into `pnpm build`
+- Fonts: switched from `next/font/google` (build-time fetch) to runtime `<link>` (sandbox-friendly, same UX in real browsers)
+- Embedding dim: explicit `output_dimensionality=768` to match `vector(768)` DB column
+- Model names: switched from web-search guesses (`gemini-3.1-flash` 404'd) to verified stable GA via real `models.list()`:
+  - `gemini-2.5-flash` (text + vision)
+  - `gemini-2.5-flash-native-audio-latest` (voice bidi)
+  - `gemini-2.5-pro` (reasoning)
+
+Committed as `9086ddb`.
+
+## Phase 3 — AI agent layer (in progress)
+
+Three parallel agents dispatched:
+- 🟡 A1 — TutorAgent + SocraticAgent + state + reply/reaction routes
+- 🟡 A2 — VisionAgent + real sketch route (Gemini Vision)
+- 🟡 A3 — VoiceAgent + ws/voice bridge (Gemini Live API)
+
 ## Phase 4 — Polish + ship (queued)
 
 ## Phase 2 — Screens (queued)

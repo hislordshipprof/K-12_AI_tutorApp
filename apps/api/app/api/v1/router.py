@@ -16,6 +16,8 @@ from app.api.v1 import (
     planner,
     qa,
     quiz,
+    reaction,
+    reply,
     sessions,
     sketch,
 )
@@ -26,6 +28,8 @@ v1.include_router(health.router)
 v1.include_router(courses.router)
 v1.include_router(sessions.router)
 v1.include_router(qa.router)
+v1.include_router(reply.router)
+v1.include_router(reaction.router)
 v1.include_router(sketch.router)
 v1.include_router(quiz.router)
 v1.include_router(notes.router)
