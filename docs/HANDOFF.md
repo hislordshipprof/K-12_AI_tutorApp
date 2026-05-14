@@ -19,10 +19,18 @@
 - Sketch UI works; backend stub for now
 - Voice mode UI works; backend stub for now
 
-### Phase 3 — AI intelligence (in progress)
+### Phase 3 — AI intelligence (commit `2caa021` + `937b747`) ✅
 - **TutorAgent + SocraticAgent**: stateful session orchestration with hint ladder, Aria persona
-- **VisionAgent**: sketch image → Gemini 2.5 Flash vision → Socratic response
+  - Multi-turn history → Aria refers back to earlier questions
+  - 4 reaction responses (slower/confused/got_it/mind_blown)
+  - Real Gemini Socratic responses verified (asks back, never defines)
+- **VisionAgent**: sketch image → Gemini 2.5 Flash vision → structured recognition + Socratic message
+  - Verified: PNG sine-wave → `shape: "wave", confidence: 1.0`
+  - Heuristic geometric fallback ported from prototype
 - **VoiceAgent**: WebSocket bridge to Gemini Live API (bidi voice)
+  - Aria persona + AUDIO modality plumbed through config
+  - Verified: WS connect → text frame → real PCM audio chunks stream back
+- 75 pytest tests pass (up from 18)
 
 ## What you need to do when you wake up
 
