@@ -3,6 +3,14 @@
 -- ----------------------------------------------------------------------------
 -- Curriculum data only — no user-owned rows (those are seeded post-signup).
 -- Idempotent: uses on conflict do nothing where possible.
+--
+-- Unit structures match the OFFICIAL College Board Course & Exam Descriptions
+-- (CEDs) as of 2026-05-14:
+--   AP Physics 1 — 2024 redesign (8 units; Waves/Sound/E&M moved to Physics 2).
+--   AP Calc BC   — 10 units.
+--   AP Biology   — 8 units.
+-- The 20260514001000_curriculum_v2_ced_2024 migration brings existing rows
+-- in line; this file is what a *fresh* `supabase db reset` recreates.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -19,98 +27,89 @@ values
 on conflict (slug) do nothing;
 
 -- ---------------------------------------------------------------------------
--- AP Physics 1 — units & topics
+-- AP Physics 1 — 2024 CED units & topics
 -- ---------------------------------------------------------------------------
 with c as (select id from public.courses where slug = 'ap-physics-1')
 insert into public.units (course_id, n, name, sort_order)
 select c.id, v.n, v.name, v.n
 from c, (values
   (1, 'Kinematics'),
-  (2, 'Forces & Newton''s Laws'),
-  (3, 'Energy & Momentum'),
-  (4, 'Waves & Sound'),
-  (5, 'Electric Charge & Force'),
-  (6, 'Circuits')
+  (2, 'Force & Translational Dynamics'),
+  (3, 'Work, Energy, and Power'),
+  (4, 'Linear Momentum'),
+  (5, 'Torque & Rotational Dynamics'),
+  (6, 'Energy & Momentum of Rotating Systems'),
+  (7, 'Oscillations'),
+  (8, 'Fluids')
 ) as v(n, name)
 on conflict (course_id, n) do nothing;
 
--- Unit 4 "Waves & Sound" — 7 topics, with the demo lesson content
--- on topic #2 "Wave Properties & Anatomy".
+-- Unit 7 "Oscillations" — demo lesson on SHM amplitude/period/frequency.
+-- The lesson content reuses the original Aria-voiced steps because SHM
+-- shares amplitude/period/frequency vocabulary with the old "wave anatomy"
+-- lesson. A follow-up content pass should drop the wavelength/v=fλ steps
+-- (those are AP Physics 2 territory in the post-2024 CED).
 with u as (
   select t.id from public.units t
   join public.courses c on c.id = t.course_id
-  where c.slug = 'ap-physics-1' and t.n = 4
+  where c.slug = 'ap-physics-1' and t.n = 7
 )
 insert into public.topics (unit_id, n, name, duration_min, summary, content, sort_order)
 select u.id, v.n, v.name, v.duration_min, v.summary, v.content::jsonb, v.n
 from u, (values
-  (1, 'Introduction to Waves', 12,
-   'What a wave is and why oscillation matters.',
-   '[]'),
-  (2, 'Wave Properties & Anatomy', 18,
-   'Crests, troughs, amplitude, wavelength, frequency, period, and v = f·λ.',
+  (1, 'Oscillations: Amplitude, Period & Frequency', 18,
+   'Simple harmonic motion: amplitude, period (T), frequency (f), and why T = 1/f. Springs and pendulums as the canonical examples.',
    $json$[
      {"tts": "Preparing your lesson.",
       "html": "Preparing your lesson…",
       "dur": "00:00"},
-     {"tts": "Every wave starts at a rest position — the line everything wobbles around.",
-      "html": "Every wave starts at a <span class=\"hl-y\">rest position</span> — the line everything wobbles around.",
+     {"tts": "Every oscillation starts at a rest position — the line everything wobbles around.",
+      "html": "Every oscillation starts at a <span class=\"hl-y\">rest position</span> — the line everything wobbles around.",
       "dur": "01:20"},
-     {"tts": "Now I'll draw the wave. Watch how it oscillates above and below equilibrium.",
-      "html": "Now I'll draw the wave. Watch how it oscillates <span class=\"hl-b\">above</span> and <span class=\"hl-p\">below</span> equilibrium.",
+     {"tts": "Now I'll draw the motion. Watch how it oscillates above and below equilibrium.",
+      "html": "Now I'll draw the motion. Watch how it oscillates <span class=\"hl-b\">above</span> and <span class=\"hl-p\">below</span> equilibrium.",
       "dur": "02:15"},
-     {"tts": "The high points are crests, and the low points are troughs.",
-      "html": "The high points are <span class=\"hl-y\">crests</span> and the low points are <span class=\"hl-p\">troughs</span>.",
+     {"tts": "The high points and low points are the extremes of the motion.",
+      "html": "The high points and low points are the <span class=\"hl-y\">extremes</span> of the motion.",
       "dur": "03:40"},
-     {"tts": "The amplitude is how far the wave goes from rest. It's the wave's energy.",
-      "html": "The <span class=\"hl-p\">amplitude</span> is how far the wave goes from rest — it's the wave's <em>energy</em>.",
+     {"tts": "The amplitude is how far the system moves from rest. It's the oscillation's energy.",
+      "html": "The <span class=\"hl-p\">amplitude</span> is how far the system moves from rest — it's the oscillation's <em>energy</em>.",
       "dur": "05:10"},
-     {"tts": "One full cycle, crest to crest, is the wavelength. That lowercase lambda.",
-      "html": "One full cycle, crest to crest, is the <span class=\"hl-g\">wavelength</span> — that lowercase λ.",
+     {"tts": "One full back-and-forth cycle takes one period. Call it T.",
+      "html": "One full back-and-forth cycle takes one <span class=\"hl-g\">period</span> — call it T.",
       "dur": "07:30"},
-     {"tts": "How often a wave repeats is frequency. Its inverse is the period.",
-      "html": "How often a wave repeats is <span class=\"hl-y\">frequency</span>. Its inverse is the <span class=\"hl-y\">period</span>.",
+     {"tts": "How often it repeats is the frequency. Its inverse is the period.",
+      "html": "How often it repeats is <span class=\"hl-y\">frequency</span>. Its inverse is the <span class=\"hl-y\">period</span>.",
       "dur": "09:50"},
-     {"tts": "Put it together: v equals f times lambda. Speed equals frequency times wavelength. That's the whole game.",
-      "html": "Put it together: <span class=\"hl-y\">v = f · λ</span>. Speed equals frequency times wavelength. That's the whole game.",
+     {"tts": "Put it together: T equals one over f. Period equals one divided by frequency. That's the whole game.",
+      "html": "Put it together: <span class=\"hl-y\">T = 1 / f</span>. Period equals one divided by frequency. That's the whole game.",
       "dur": "12:40"}
-   ]$json$),
-  (3, 'Wave Speed & Medium', 14,
-   'How the medium sets v, and why heavier strings sound lower.',
-   '[]'),
-  (4, 'Superposition & Interference', 20,
-   'Constructive vs. destructive interference; beats.',
-   '[]'),
-  (5, 'Standing Waves', 16,
-   'Nodes, antinodes, and the harmonics of strings & pipes.',
-   '[]'),
-  (6, 'Sound Waves & Doppler', 22,
-   'Longitudinal pressure waves and frequency shift from motion.',
-   '[]'),
-  (7, 'Unit 4 Practice Exam', 45,
-   'Mixed MCQ + FRQ on everything in Unit 4.',
-   '[]')
+   ]$json$)
 ) as v(n, name, duration_min, summary, content)
 on conflict (unit_id, n) do nothing;
 
 -- ---------------------------------------------------------------------------
--- AP Calculus BC — units only (no topic content)
+-- AP Calculus BC — 2024 CED 10 units (no topic content yet)
 -- ---------------------------------------------------------------------------
 with c as (select id from public.courses where slug = 'ap-calc-bc')
 insert into public.units (course_id, n, name, sort_order)
 select c.id, v.n, v.name, v.n
 from c, (values
-  (1, 'Limits & Continuity'),
-  (2, 'Differentiation'),
-  (3, 'Applications of Derivatives'),
-  (4, 'Integration'),
-  (5, 'Differential Equations'),
-  (6, 'Series & Sequences')
+  (1,  'Limits & Continuity'),
+  (2,  'Differentiation: Definition & Fundamental Properties'),
+  (3,  'Differentiation: Composite, Implicit, & Inverse Functions'),
+  (4,  'Contextual Applications of Differentiation'),
+  (5,  'Analytical Applications of Differentiation'),
+  (6,  'Integration & Accumulation of Change'),
+  (7,  'Differential Equations'),
+  (8,  'Applications of Integration'),
+  (9,  'Parametric, Polar, & Vector-Valued Functions'),
+  (10, 'Infinite Sequences & Series')
 ) as v(n, name)
 on conflict (course_id, n) do nothing;
 
 -- ---------------------------------------------------------------------------
--- AP Biology — units only
+-- AP Biology — 2024 CED 8 units (already matched; left for fresh checkouts)
 -- ---------------------------------------------------------------------------
 with c as (select id from public.courses where slug = 'ap-biology')
 insert into public.units (course_id, n, name, sort_order)
