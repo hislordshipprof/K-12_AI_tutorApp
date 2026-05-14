@@ -93,21 +93,31 @@ vercel --prod
 
 See `docs/deployment.md` for the full guide.
 
-## What's stubbed vs real
+## What's stubbed vs real (updated 2026-05-14)
 
 | Feature | Status |
 |---|---|
-| All 9 UI screens | ✅ Real, prototype-faithful |
-| Q&A streaming (Gemini text) | ✅ End-to-end real Gemini |
+| All 9 UI screens | ✅ Real, Playwright 15/15 passing against prod build |
+| Q&A streaming (Gemini text) | ✅ End-to-end on `gemini-3.1-flash-lite`, Socratic |
 | Sketch UI (drawing) | ✅ Real (perfect-freehand chalk) |
-| Sketch analysis (vision) | 🟡 Phase 3 in progress; UI works, awaiting agent A2 |
-| Voice mode UI | ✅ Real (Web Speech for transcription) |
-| Voice mode bidi (Gemini Live) | 🟡 Phase 3 in progress; agent A3 |
-| Reactions (🐢 😕 💡 🤯) | ✅ UI works; backend wiring in agent A1 |
-| Reply bar | ✅ UI works; backend wiring in agent A1 |
-| Quiz feedback | ✅ Local logic (correct answer hardcoded); backend stub |
-| Notes / Planner / History | 🟡 UI renders with fixture data; real CRUD pending |
-| Auth (Supabase magic link) | 🟡 Demo mode bypass works; login UI not built |
+| Sketch analysis (vision) | ✅ Real Gemini multimodal; 8MB cap + magic-byte sniff |
+| Voice mode UI | ✅ Real |
+| Voice mode bidi (Gemini Live) | ✅ Real WS bridge to `gemini-2.5-flash-native-audio-latest` |
+| Reactions (🐢 😕 💡 🤯) | ✅ Live-verified end-to-end |
+| Reply bar | ✅ Multi-turn dialog with session state |
+| Notes / Planner / History | ✅ Real Supabase CRUD; UI fetches `/v1/notes`, `/v1/planner/week`, `/v1/history` |
+| Auth (Supabase magic link + Google) | ✅ `/login`, `/auth/callback`, middleware gating |
+| Dashboard real user state | ✅ name/streak/stats from `/v1/me`; curriculum tree from `/v1/courses/{slug}/units` |
+| Curriculum tree (College Board CED 2024) | ✅ Migration applied; Physics 1 = 8 units, Calc BC = 10, Biology = 8 |
+| Per-user rate limiting | ✅ slowapi (qa+reply 30/min, sketch 10/min, voice WS 1 concurrent) |
+| IDOR ownership checks | ✅ `require_session_owner` on every session-id route |
+| Lesson content for ≥1 topic | ✅ Oscillations: Amplitude, Period & Frequency (hand-authored) |
+| Lesson content for other ~25 topics | 🟡 Empty `[]` — needs content pipeline (designed, not built) |
+| Quiz questions per topic | 🟡 One hardcoded sample shared across all topics |
+| Quiz feedback | ✅ UI works; backend records attempts to `quiz_attempts` |
+| Interruption: barge-in during voice + cancel mid-stream | 🟡 Designed (`docs/interruption-architecture.md`), not built |
+| Sentry / `agent_traces` observability | 🟡 Schema ready, writer not built |
+| Vercel + Fly.io deploy | 🟡 Configs ready; needs user-driven `vercel link` + `fly launch` |
 
 ## Cost so far
 
