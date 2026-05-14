@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { clickAndNavigate } from '../helpers/hydration';
 import { installMockApi } from '../helpers/mock-api';
 
 test.describe('Dashboard', () => {
@@ -19,25 +20,36 @@ test.describe('Dashboard', () => {
   });
 
   test('"Resume lesson" navigates to the wave-properties classroom', async ({ page }) => {
-    // The hero CTA is a <button> whose accessible name starts with the
-    // eyebrow label "Pick up where you left off".
-    await page
-      .getByRole('button', { name: /Pick up where you left off/i })
-      .click();
-    await expect(page).toHaveURL(/\/classroom\/wave-properties-anatomy$/);
+    await clickAndNavigate(
+      page,
+      page.getByRole('button', { name: /Pick up where you left off/i }),
+      /\/classroom\/wave-properties-anatomy$/,
+    );
   });
 
   test('rail nav: dashboard → planner → notes → history', async ({ page }) => {
-    await page.getByRole('button', { name: 'Plan' }).click();
-    await expect(page).toHaveURL(/\/planner$/);
-
-    await page.getByRole('button', { name: 'Notes' }).click();
-    await expect(page).toHaveURL(/\/notes$/);
-
-    await page.getByRole('button', { name: 'History' }).click();
-    await expect(page).toHaveURL(/\/history$/);
-
-    await page.getByRole('button', { name: 'Home' }).click();
-    await expect(page).toHaveURL(/\/dashboard$/);
+    // `exact: true` because the TopNav "EduMind home" logo button would
+    // otherwise also match `name: 'Home'` via substring, and Playwright
+    // would click the wrong one (which navigates to '/').
+    await clickAndNavigate(
+      page,
+      page.getByRole('button', { name: 'Plan', exact: true }),
+      /\/planner$/,
+    );
+    await clickAndNavigate(
+      page,
+      page.getByRole('button', { name: 'Notes', exact: true }),
+      /\/notes$/,
+    );
+    await clickAndNavigate(
+      page,
+      page.getByRole('button', { name: 'History', exact: true }),
+      /\/history$/,
+    );
+    await clickAndNavigate(
+      page,
+      page.getByRole('button', { name: 'Home', exact: true }),
+      /\/dashboard$/,
+    );
   });
 });

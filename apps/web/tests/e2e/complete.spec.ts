@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { clickAndWait } from '../helpers/hydration';
 import { installMockApi } from '../helpers/mock-api';
 
 test.describe('Lesson-complete celebration', () => {
@@ -19,10 +20,11 @@ test.describe('Lesson-complete celebration', () => {
   });
 
   test('"Back to dashboard" returns to the landing/dashboard route', async ({ page }) => {
-    // The app sends this button to "/" (landing). We only assert the
-    // navigation away from the complete screen — destination is either
-    // landing or dashboard depending on prod wiring.
-    await page.getByRole('button', { name: /back to dashboard/i }).click();
-    await expect(page).not.toHaveURL(/\/classroom\/complete\//);
+    await clickAndWait(
+      page.getByRole('button', { name: /back to dashboard/i }),
+      async () => {
+        await expect(page).not.toHaveURL(/\/classroom\/complete\//, { timeout: 1_500 });
+      },
+    );
   });
 });

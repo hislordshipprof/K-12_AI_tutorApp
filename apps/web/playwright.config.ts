@@ -34,11 +34,17 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
+  // E2E runs against the production build, not `next dev`. Dev mode +
+  // React 19 + Turbopack has known hydration-timing flakes where client
+  // onClick handlers stay unbound for hundreds of ms after the network
+  // settles. `next build && next start` produces a fully-hydrated bundle
+  // that behaves like real production traffic. The first run pays the
+  // build cost (~30s); subsequent runs reuse the cache.
   webServer: {
-    command: 'pnpm dev',
+    command: 'pnpm build && pnpm start',
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
+    timeout: 240_000,
     stdout: 'pipe',
     stderr: 'pipe',
   },

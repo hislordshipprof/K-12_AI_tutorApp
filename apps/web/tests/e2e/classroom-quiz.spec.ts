@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { clickAndNavigate, clickAndReveal } from '../helpers/hydration';
 import { installMockApi } from '../helpers/mock-api';
 
 /**
@@ -21,12 +22,12 @@ test.describe('Classroom — quiz flow', () => {
       waitUntil: 'networkidle',
     });
 
-    // Option A = "4 seconds" (wrong). Use the locator chain so we don't
-    // depend on Playwright's accessible-name flattening between two child
-    // divs (letter + text).
-    await page.locator('button.q-opt', { hasText: '4 seconds' }).first().click();
-
-    await expect(page.getByText(/close .{0,3}but no/i)).toBeVisible();
+    // The option button's onClick is guarded by `if (showFb) return;`, so
+    // retrying the click is safe — once it lands, repeat clicks are no-ops.
+    await clickAndReveal(
+      page.locator('button.q-opt', { hasText: '4 seconds' }).first(),
+      page.getByText(/close .{0,3}but no/i),
+    );
   });
 
   test('correct answer shows the "Nailed it" feedback then advances', async ({ page }) => {
@@ -34,12 +35,15 @@ test.describe('Classroom — quiz flow', () => {
       waitUntil: 'networkidle',
     });
 
-    // Option B = "0.25 seconds" (CORRECT).
-    await page.locator('button.q-opt', { hasText: '0.25 seconds' }).click();
+    await clickAndReveal(
+      page.locator('button.q-opt', { hasText: '0.25 seconds' }).first(),
+      page.getByText(/nailed it/i),
+    );
 
-    await expect(page.getByText(/nailed it/i)).toBeVisible();
-
-    await page.getByRole('button', { name: /next question/i }).click();
-    await expect(page).toHaveURL(/\/classroom\/complete\/wave-properties-anatomy$/);
+    await clickAndNavigate(
+      page,
+      page.getByRole('button', { name: /next question/i }),
+      /\/classroom\/complete\/wave-properties-anatomy$/,
+    );
   });
 });
