@@ -16,7 +16,7 @@ import pytest
 
 # Set env BEFORE importing the app — pydantic-settings reads at import time.
 os.environ.setdefault("GEMINI_API_KEY", "test-key")
-os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
+os.environ.setdefault("SUPABASE_URL", "http://127.0.0.1:54321")
 os.environ.setdefault("SUPABASE_ANON_KEY", "anon-key")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "service-role-key")
 os.environ.setdefault("SUPABASE_JWT_SECRET", "test-jwt-secret")

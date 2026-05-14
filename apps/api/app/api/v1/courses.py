@@ -1,25 +1,28 @@
-"""Courses & topics endpoints — stubs returning sample data.
+"""Courses & topics endpoints — backed by Supabase.
 
-A later agent will wire these to Supabase. The shape of the responses
-here matches `CourseOut` / `TopicOut` exactly so the frontend can be
-built against the real contract.
+Falls back to deterministic sample data when Supabase is unreachable
+(local dev without `supabase start`). The fallback is gated on the
+DEV_MODE flag — in production a Supabase outage will surface as 503.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Annotated, Any
-from uuid import UUID, uuid5, NAMESPACE_URL
+from uuid import UUID, NAMESPACE_URL, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.core.logging import get_logger
 from app.core.security import get_current_user
+from app.core.supabase import get_supabase, supabase_enabled
 from app.models.schemas import CourseOut, TopicOut
 
 router = APIRouter(tags=["courses"])
+log = get_logger(__name__)
 
 
-# Deterministic UUIDs so the stub data is stable between requests/restarts.
+# ─── Sample data (dev-mode fallback only) ──────────────────────────────────
 def _det_uuid(seed: str) -> UUID:
     return uuid5(NAMESPACE_URL, f"k12-tutor::{seed}")
 
@@ -79,9 +82,33 @@ _SAMPLE_TOPICS: dict[UUID, dict[str, Any]] = {
 }
 
 
+# ─── Endpoints ────────────────────────────────────────────────────────────
 @router.get("/courses", response_model=list[CourseOut])
 async def list_courses() -> list[dict[str, Any]]:
     """Public — drives the landing-page course picker."""
+    supabase = get_supabase()
+    if supabase is not None:
+        try:
+            resp = (
+                supabase.table("courses")
+                .select("*")
+                .order("sort_order")
+                .execute()
+            )
+            rows = getattr(resp, "data", None) or []
+            if rows:
+                return rows
+        except Exception as e:  # noqa: BLE001
+            log.warning("courses_supabase_failed", error=str(e))
+            if not supabase_enabled():
+                pass  # already gated
+            else:
+                # Real outage in non-dev: bubble up.
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="courses unavailable",
+                ) from e
+    # Dev fallback.
     return _SAMPLE_COURSES
 
 
@@ -91,6 +118,33 @@ async def get_topic(
     _user: Annotated[dict[str, Any], Depends(get_current_user)],
 ) -> dict[str, Any]:
     """Authenticated — full topic content (lesson steps + summary)."""
+    supabase = get_supabase()
+    if supabase is not None:
+        try:
+            resp = (
+                supabase.table("topics")
+                .select("*")
+                .eq("id", str(topic_id))
+                .limit(1)
+                .execute()
+            )
+            rows = getattr(resp, "data", None) or []
+            if rows:
+                return rows[0]
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found"
+            )
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.warning("topic_supabase_failed", error=str(e), topic_id=str(topic_id))
+            if supabase_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="topic unavailable",
+                ) from e
+
+    # Dev fallback.
     topic = _SAMPLE_TOPICS.get(topic_id)
     if topic is None:
         raise HTTPException(
