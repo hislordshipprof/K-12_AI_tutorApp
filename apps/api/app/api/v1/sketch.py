@@ -35,13 +35,16 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
     status,
 )
 from fastapi.responses import StreamingResponse
 
 from app.core.logging import get_logger
+from app.core.rate_limit import limiter
 from app.core.security import get_current_user
+from app.core.session_auth import require_session_owner
 from app.services.gemini import GeminiService, get_gemini
 
 log = get_logger(__name__)
@@ -148,16 +151,20 @@ async def _persist_sketch_row(
 
 # ── Endpoint ─────────────────────────────────────────────────────────────────
 @router.post("/sessions/{session_id}/sketch")
+@limiter.limit("10/minute")
 async def analyze_sketch(
+    request: Request,
     session_id: UUID,
     background_tasks: BackgroundTasks,
     user: Annotated[dict[str, Any], Depends(get_current_user)],
+    session: Annotated[dict[str, Any], Depends(require_session_owner)],
     gemini: Annotated[GeminiService, Depends(get_gemini)],
     image: UploadFile = File(...),
     question: str | None = Form(default=None),
     current_step_idx: int | None = Form(default=None),
 ) -> StreamingResponse:
     """Analyze a student's chalkboard sketch and stream Aria's Socratic reply."""
+    _ = session  # ownership-verified by dependency
 
     # ── 1. Quick size guard from the multipart header ─────────────────────
     if image.size and image.size > MAX_IMAGE_BYTES:

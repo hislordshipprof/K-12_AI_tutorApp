@@ -24,9 +24,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
 from app.api.v1.router import v1
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
+from app.core.rate_limit import limiter
 from app.ws.voice import router as voice_router
 
 APP_VERSION = "0.1.0"
@@ -39,6 +43,21 @@ APP_VERSION = "0.1.0"
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     configure_logging()
     log = get_logger("startup")
+
+    # HARD GUARD: production must never run with DEV_MODE shortcuts enabled.
+    # `Settings.is_dev` already returns False in production, but if the env
+    # was set inconsistently we still want a loud failure at boot rather
+    # than a silent footgun.
+    if settings.is_production and settings.dev_mode:
+        raise RuntimeError(
+            "Refusing to boot: ENVIRONMENT=production with DEV_MODE=true. "
+            "Set DEV_MODE=false (and don't send the X-Dev-User-Id header)."
+        )
+    if settings.is_production and settings.cors_origins.strip() == "*":
+        raise RuntimeError(
+            "Refusing to boot: ENVIRONMENT=production with CORS_ORIGINS='*'. "
+            "Lock CORS_ORIGINS to your web origin(s)."
+        )
 
     # Soft-validate critical config (warn, don't crash — allows /health
     # and unit tests to work even before secrets are wired).
@@ -92,6 +111,25 @@ app = FastAPI(
         {"name": "flashcards", "description": "Spaced-repetition flashcards."},
     ],
 )
+
+
+# ── Rate limiting (per-user) ─────────────────────────────────────────────────
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={
+            "error": "rate_limited",
+            "detail": f"Too many requests. Try again in a moment ({exc.detail}).",
+            "request_id": request.headers.get("x-request-id"),
+        },
+    )
+
+
+app.add_middleware(SlowAPIMiddleware)
 
 
 # ── CORS ─────────────────────────────────────────────────────────────────────

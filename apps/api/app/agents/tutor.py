@@ -86,12 +86,16 @@ class TutorAgent:
         key = _session_key(session_id)
 
         # 1. Try Supabase first.
-        if self.supabase is not None:
+        # NOTE: We use the service-role client, which bypasses RLS, so we
+        # MUST scope the query by user_id ourselves. The handler already
+        # ran `require_session_owner` — this filter is defense-in-depth.
+        if self.supabase is not None and user_id:
             try:
                 resp = (
                     self.supabase.table("lesson_sessions")
                     .select("id,topic_id,agent_state")
                     .eq("id", str(session_id))
+                    .eq("user_id", str(user_id))
                     .limit(1)
                     .execute()
                 )
@@ -144,8 +148,17 @@ class TutorAgent:
         )
         return state
 
-    async def save_state(self, session_id: Any, state: SessionState) -> None:
-        """Persist ``state`` back to Supabase; cache locally as a backup."""
+    async def save_state(
+        self,
+        session_id: Any,
+        state: SessionState,
+        user_id: str | None = None,
+    ) -> None:
+        """Persist ``state`` back to Supabase; cache locally as a backup.
+
+        When `user_id` is provided we scope the UPDATE to that user as
+        defense-in-depth against IDOR (service-role bypasses RLS).
+        """
         key = _session_key(session_id)
         # Always update local cache so a Supabase outage doesn't lose progress.
         self._memory[key] = state
@@ -156,12 +169,14 @@ class TutorAgent:
 
         try:
             payload = state.model_dump(mode="json")
-            (
+            q = (
                 self.supabase.table("lesson_sessions")
                 .update({"agent_state": payload})
                 .eq("id", str(session_id))
-                .execute()
             )
+            if user_id:
+                q = q.eq("user_id", str(user_id))
+            q.execute()
             log.debug("tutor_state_saved", session_id=key)
         except Exception as e:  # noqa: BLE001
             log.warning(
@@ -198,7 +213,7 @@ class TutorAgent:
                 source=source if source in ("text", "voice", "sketch") else "text",
             )
         )
-        await self.save_state(session_id, state)
+        await self.save_state(session_id, state, user_id=user_id)
 
     async def handle_reply(
         self,
@@ -225,7 +240,7 @@ class TutorAgent:
                 source="text",
             )
         )
-        await self.save_state(session_id, state)
+        await self.save_state(session_id, state, user_id=user_id)
 
     async def handle_reaction(
         self,
@@ -255,7 +270,7 @@ class TutorAgent:
             state.hint_level = min(state.hint_level + 1, 3)
 
         state.student_signals = signals
-        await self.save_state(session_id, state)
+        await self.save_state(session_id, state, user_id=user_id)
 
         return self.socratic.respond_to_reaction(state, reaction)
 

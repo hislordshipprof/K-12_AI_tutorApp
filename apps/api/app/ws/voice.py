@@ -30,12 +30,16 @@ Auth modes
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter, Query, WebSocket
 
 from app.agents.voice import VoiceBridge
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.rate_limit import voice_acquire, voice_release
 from app.core.security import verify_supabase_jwt
+from app.core.session_auth import assert_session_owner_ws
 from app.services.gemini import get_gemini
 
 router = APIRouter()
@@ -83,11 +87,40 @@ async def voice_ws(
             return
         user_id = claims.get("sub")
 
+    # ── ownership check ──────────────────────────────────────────────────
+    # Service-role bridges bypass RLS, so confirm the authenticated user
+    # actually owns this session before opening the Gemini Live tunnel.
+    try:
+        sess_uuid = UUID(session_id)
+    except (TypeError, ValueError):
+        await websocket.close(code=4400, reason="invalid session_id")
+        return
+    if user_id and not await assert_session_owner_ws(sess_uuid, str(user_id)):
+        log.warning(
+            "voice_ws_not_session_owner",
+            session_id=session_id,
+            user_id=user_id,
+        )
+        await websocket.close(code=4403, reason="session not owned by user")
+        return
+
+    # ── concurrency gate (1 voice WS per user) ────────────────────────────
+    # Voice bridges Gemini Live — the most expensive surface. Cap to a
+    # single concurrent session per authenticated user.
+    gate_user = str(user_id or "anon")
+    if not await voice_acquire(gate_user):
+        log.warning("voice_ws_rate_limited", session_id=session_id, user_id=gate_user)
+        await websocket.close(code=4429, reason="too many concurrent voice sessions")
+        return
+
     # ── bridge ───────────────────────────────────────────────────────────
     bridge = VoiceBridge(get_gemini())
-    await bridge.run(
-        websocket,
-        session_id=session_id,
-        user_id=user_id,
-        topic_name=topic,
-    )
+    try:
+        await bridge.run(
+            websocket,
+            session_id=session_id,
+            user_id=user_id,
+            topic_name=topic,
+        )
+    finally:
+        await voice_release(gate_user)

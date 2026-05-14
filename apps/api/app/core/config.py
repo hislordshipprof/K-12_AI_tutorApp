@@ -23,17 +23,19 @@ class Settings(BaseSettings):
     )
 
     # ── Gemini ──────────────────────────────────────────────────────────────
-    # Defaults are STABLE GA models verified via the live `models.list()` API.
-    # Override via env to opt into previews (e.g. gemini-3.1-pro-preview).
+    # Defaults are STABLE GA models verified via the live `models.list()` API
+    # on 2026-05-14. The Gemini 2.5 family deprecates on 2026-06-17 so the
+    # defaults track 3.x where GA. LIVE stays on 2.5 native-audio until the
+    # 3.1 live API leaves Preview.
     gemini_api_key: SecretStr = Field(default=SecretStr(""), alias="GEMINI_API_KEY")
-    gemini_model_text: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL_TEXT")
-    gemini_model_vision: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL_VISION")
+    gemini_model_text: str = Field(default="gemini-3.1-flash-lite", alias="GEMINI_MODEL_TEXT")
+    gemini_model_vision: str = Field(default="gemini-3.1-flash-lite", alias="GEMINI_MODEL_VISION")
     gemini_model_live: str = Field(
         default="gemini-2.5-flash-native-audio-latest", alias="GEMINI_MODEL_LIVE"
     )
-    gemini_model_pro: str = Field(default="gemini-2.5-pro", alias="GEMINI_MODEL_PRO")
+    gemini_model_pro: str = Field(default="gemini-pro-latest", alias="GEMINI_MODEL_PRO")
     gemini_model_embed: str = Field(
-        default="gemini-embedding-001", alias="GEMINI_MODEL_EMBED"
+        default="gemini-embedding-2", alias="GEMINI_MODEL_EMBED"
     )
 
     # ── Supabase ────────────────────────────────────────────────────────────
@@ -77,9 +79,21 @@ class Settings(BaseSettings):
         }
 
     @property
+    def is_production(self) -> bool:
+        """True when ENVIRONMENT is set to a recognised prod value."""
+        return self.environment.lower() in {"production", "prod"}
+
+    @property
     def is_dev(self) -> bool:
-        """True when running in local/dev mode (relaxed auth)."""
-        return self.dev_mode or self.log_level == "DEBUG"
+        """True when relaxed-auth dev shortcuts (e.g. X-Dev-User-Id header) are allowed.
+
+        Hard rule: production NEVER allows dev shortcuts even if DEV_MODE=true
+        was accidentally set. This is a defense-in-depth gate; pair with the
+        startup assertion in `app.main` lifespan.
+        """
+        if self.is_production:
+            return False
+        return self.dev_mode
 
 
 @lru_cache(maxsize=1)

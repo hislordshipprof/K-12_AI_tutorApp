@@ -20,13 +20,15 @@ from collections.abc import AsyncGenerator
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.agents.tutor import TutorAgent, get_tutor
 from app.core.logging import get_logger
+from app.core.rate_limit import limiter
 from app.core.security import get_current_user
+from app.core.session_auth import require_session_owner
 
 router = APIRouter(tags=["qa"])
 log = get_logger(__name__)
@@ -51,15 +53,21 @@ def _sse(payload: dict[str, Any]) -> str:
 
 
 @router.post("/sessions/{session_id}/qa")
+@limiter.limit("30/minute")
 async def ask_question(
+    request: Request,
     session_id: UUID,
     body: QAStreamRequest,
     user: Annotated[dict[str, Any], Depends(get_current_user)],
+    session: Annotated[dict[str, Any], Depends(require_session_owner)],
     tutor: Annotated[TutorAgent, Depends(get_tutor)],
 ) -> StreamingResponse:
     """Stream Aria's Socratic reply, then persist the turn to session state."""
 
     user_id = str(user.get("sub") or "")
+    # `session` was already ownership-verified by the dependency; its
+    # presence here guarantees we're reading/writing our own session.
+    _ = session
 
     async def event_stream() -> AsyncGenerator[bytes, None]:
         log.info(

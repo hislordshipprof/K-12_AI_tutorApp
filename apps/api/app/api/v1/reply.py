@@ -17,13 +17,15 @@ from collections.abc import AsyncGenerator
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.agents.tutor import TutorAgent, get_tutor
 from app.core.logging import get_logger
+from app.core.rate_limit import limiter
 from app.core.security import get_current_user
+from app.core.session_auth import require_session_owner
 
 router = APIRouter(tags=["qa"])
 log = get_logger(__name__)
@@ -44,15 +46,19 @@ def _sse(payload: dict[str, Any]) -> str:
 
 
 @router.post("/sessions/{session_id}/reply")
+@limiter.limit("30/minute")
 async def submit_reply(
+    request: Request,
     session_id: UUID,
     body: ReplyRequest,
     user: Annotated[dict[str, Any], Depends(get_current_user)],
+    session: Annotated[dict[str, Any], Depends(require_session_owner)],
     tutor: Annotated[TutorAgent, Depends(get_tutor)],
 ) -> StreamingResponse:
     """Stream Aria's response to a typed student attempt."""
 
     user_id = str(user.get("sub") or "")
+    _ = session  # ownership-verified by dependency
 
     async def event_stream() -> AsyncGenerator[bytes, None]:
         log.info("reply_start", session_id=str(session_id), user_id=user_id)

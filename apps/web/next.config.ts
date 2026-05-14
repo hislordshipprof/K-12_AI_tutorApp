@@ -1,5 +1,19 @@
 import type { NextConfig } from 'next';
 
+// HARD GUARD: refuse to build for Vercel production when demo-mode bypass
+// is set. NEXT_PUBLIC_DEMO_MODE short-circuits middleware auth gating in
+// `apps/web/src/middleware.ts` — fine for marketing previews, catastrophic
+// in prod (leaves /dashboard, /classroom etc. publicly reachable).
+if (
+  process.env.VERCEL_ENV === 'production' &&
+  process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
+) {
+  throw new Error(
+    'Refusing to build: VERCEL_ENV=production with NEXT_PUBLIC_DEMO_MODE=true. ' +
+      'Unset NEXT_PUBLIC_DEMO_MODE on the production Vercel project.',
+  );
+}
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseHost = (() => {
   if (!supabaseUrl) return undefined;

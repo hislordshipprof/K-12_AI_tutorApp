@@ -180,7 +180,7 @@ def test_connect_dev_mode_no_token_accepts(
     install_fake_gemini: _FakeLiveSession,
 ) -> None:
     """In DEV_MODE the route accepts a connection with no token and emits {'type':'ready'}."""
-    with app_client.websocket_connect("/ws/voice/test-session") as ws:
+    with app_client.websocket_connect("/ws/voice/11111111-2222-3333-4444-555555555555") as ws:
         first = json.loads(ws.receive_text())
         assert first == {"type": "ready"}
 
@@ -192,7 +192,7 @@ def test_connect_invalid_token_closes_4401(
     """An invalid JWT must close the socket with policy code 4401."""
     with pytest.raises(WebSocketDisconnect) as excinfo:
         with app_client.websocket_connect(
-            "/ws/voice/test-session?token=not-a-real-jwt"
+            "/ws/voice/11111111-2222-3333-4444-555555555555?token=not-a-real-jwt"
         ) as ws:
             ws.receive_text()  # should never arrive
     assert excinfo.value.code == 4401
@@ -214,7 +214,7 @@ def test_connect_valid_jwt_accepts(
         algorithm="HS256",
     )
     with app_client.websocket_connect(
-        f"/ws/voice/test-session?token={token}"
+        f"/ws/voice/11111111-2222-3333-4444-555555555555?token={token}"
     ) as ws:
         first = json.loads(ws.receive_text())
         assert first["type"] == "ready"
@@ -230,7 +230,7 @@ def test_client_audio_forwarded_to_gemini(
     pcm = b"\x00\x01\x02\x03" * 8  # 32 bytes of fake PCM
     payload = {"type": "audio", "audio": base64.b64encode(pcm).decode()}
 
-    with app_client.websocket_connect("/ws/voice/test-session") as ws:
+    with app_client.websocket_connect("/ws/voice/11111111-2222-3333-4444-555555555555") as ws:
         assert json.loads(ws.receive_text()) == {"type": "ready"}
         ws.send_text(json.dumps(payload))
         # Drain the bridge — close ends the connection cleanly.
@@ -262,7 +262,7 @@ def test_gemini_audio_forwarded_to_client(
     session.push(_make_server_msg(turn_complete=True))
     session.end_stream()  # tells the bridge's receive loop to finish
 
-    with app_client.websocket_connect("/ws/voice/test-session") as ws:
+    with app_client.websocket_connect("/ws/voice/11111111-2222-3333-4444-555555555555") as ws:
         msgs: list[dict[str, Any]] = []
         # Pull frames until 'done' arrives (sent by the finally-block).
         while True:
@@ -294,7 +294,7 @@ def test_client_text_routes_to_send_client_content(
 ) -> None:
     """A {'type':'text'} from the client should call send_client_content."""
     session = install_fake_gemini
-    with app_client.websocket_connect("/ws/voice/test-session") as ws:
+    with app_client.websocket_connect("/ws/voice/11111111-2222-3333-4444-555555555555") as ws:
         assert json.loads(ws.receive_text()) == {"type": "ready"}
         ws.send_text(json.dumps({"type": "text", "text": "Hi Aria!"}))
         # Trigger one more pass to let the loop run.
@@ -318,7 +318,7 @@ def test_bad_audio_b64_emits_error_frame(
     """A malformed base64 audio payload should produce an {'type':'error'} reply,
     without tearing the socket down (the bridge keeps relaying).
     """
-    with app_client.websocket_connect("/ws/voice/test-session") as ws:
+    with app_client.websocket_connect("/ws/voice/11111111-2222-3333-4444-555555555555") as ws:
         assert json.loads(ws.receive_text()) == {"type": "ready"}
         ws.send_text(json.dumps({"type": "audio", "audio": "!!!not-base64!!!"}))
         msg = json.loads(ws.receive_text())
