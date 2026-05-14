@@ -151,3 +151,94 @@ async def get_topic(
             status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found"
         )
     return topic
+
+
+# ─── Curriculum tree ──────────────────────────────────────────────────────
+@router.get("/courses/{slug}/units")
+async def list_course_units(
+    slug: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> list[dict[str, Any]]:
+    """Nested unit/topic tree for a course — drives the dashboard curriculum view.
+
+    Returns:
+        [
+          {
+            "id": "<unit uuid>",
+            "n": 1,
+            "name": "Kinematics",
+            "topics": [
+              {"id": "<topic uuid>", "n": 1, "name": "...", "duration_min": 12}
+            ]
+          },
+          ...
+        ]
+
+    No fake data — when Supabase isn't reachable we return an empty list and
+    the frontend renders an "Enroll to see your curriculum" empty state.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        return []
+
+    try:
+        # 1. Resolve course slug -> id.
+        c_resp = (
+            supabase.table("courses")
+            .select("id")
+            .eq("slug", slug)
+            .limit(1)
+            .execute()
+        )
+        c_rows = getattr(c_resp, "data", None) or []
+        if not c_rows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Course not found"
+            )
+        course_id = c_rows[0]["id"]
+
+        # 2. Units for the course.
+        u_resp = (
+            supabase.table("units")
+            .select("id,n,name")
+            .eq("course_id", course_id)
+            .order("n")
+            .execute()
+        )
+        units = getattr(u_resp, "data", None) or []
+        if not units:
+            return []
+
+        # 3. Topics for those units, bulk-fetch and group.
+        unit_ids = [u["id"] for u in units]
+        t_resp = (
+            supabase.table("topics")
+            .select("id,unit_id,n,name,duration_min")
+            .in_("unit_id", unit_ids)
+            .order("n")
+            .execute()
+        )
+        topics_by_unit: dict[str, list[dict[str, Any]]] = {}
+        for t in (getattr(t_resp, "data", None) or []):
+            topics_by_unit.setdefault(str(t["unit_id"]), []).append(
+                {
+                    "id": t["id"],
+                    "n": t["n"],
+                    "name": t["name"],
+                    "duration_min": t.get("duration_min"),
+                }
+            )
+        return [
+            {
+                "id": u["id"],
+                "n": u["n"],
+                "name": u["name"],
+                "topics": topics_by_unit.get(str(u["id"]), []),
+            }
+            for u in units
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.warning("course_units_supabase_failed", error=str(e), slug=slug)
+        return []

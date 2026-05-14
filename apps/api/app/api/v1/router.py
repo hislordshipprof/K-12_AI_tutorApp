@@ -12,6 +12,8 @@ from app.api.v1 import (
     courses,
     flashcards,
     health,
+    history,
+    me,
     notes,
     planner,
     qa,
@@ -25,6 +27,7 @@ from app.api.v1 import (
 v1 = APIRouter(prefix="/v1")
 
 v1.include_router(health.router)
+v1.include_router(me.router)
 v1.include_router(courses.router)
 v1.include_router(sessions.router)
 v1.include_router(qa.router)
@@ -35,3 +38,4 @@ v1.include_router(quiz.router)
 v1.include_router(notes.router)
 v1.include_router(planner.router)
 v1.include_router(flashcards.router)
+v1.include_router(history.router)
