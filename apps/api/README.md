@@ -42,10 +42,10 @@ Default models (April 2026):
 
 | Slot          | Model                          |
 | ------------- | ------------------------------ |
-| `text`        | `gemini-3.1-flash`             |
-| `vision`      | `gemini-3.1-flash`             |
-| `live` (ws)   | `gemini-3.1-flash-live-preview`|
-| `pro`         | `gemini-3.1-pro`               |
+| `text`        | `gemini-2.5-flash`             |
+| `vision`      | `gemini-2.5-flash`             |
+| `live` (ws)   | `gemini-2.5-flash-native-audio-latest`|
+| `pro`         | `gemini-2.5-pro`               |
 | `embeddings`  | `gemini-embedding-001`         |
 
 ## Layout

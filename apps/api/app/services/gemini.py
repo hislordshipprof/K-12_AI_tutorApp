@@ -233,8 +233,16 @@ class GeminiService:
         # tenacity always raises on exhaustion — this is just for type-checkers.
         raise RuntimeError("analyze_image: retry loop exhausted without yielding")
 
-    async def embed(self, text: str | list[str]) -> list[list[float]]:
+    async def embed(
+        self,
+        text: str | list[str],
+        output_dim: int = 768,
+    ) -> list[list[float]]:
         """Compute embeddings via `gemini-embedding-001`.
+
+        gemini-embedding-001 produces 3072-dim vectors by default; we request 768
+        to match the `vector(768)` column in the `lesson_embeddings` table.
+        Pass `output_dim=3072` if you need the full embedding.
 
         Returns a list-of-vectors (one per input).
         """
@@ -245,6 +253,7 @@ class GeminiService:
                 response = await self.client.aio.models.embed_content(
                     model=settings.gemini_model_embed,
                     contents=items,
+                    config={"output_dimensionality": output_dim},
                 )
                 # New SDK returns `.embeddings` (list with `.values` each).
                 embeddings = getattr(response, "embeddings", None) or []

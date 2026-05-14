@@ -50,17 +50,17 @@ K-12 AI Tutor (EduMind) is a multimodal AI tutor for high schoolers. The standou
 │                            ↓                                  │
 │                          GeminiService.stream_text            │
 │                            ↓                                  │
-│                          gemini-3.1-flash (SSE)               │
+│                          gemini-2.5-flash (SSE)               │
 │                                                              │
 │   /v1/sessions/:id/sketch ─→ VisionAgent                     │
 │                                ↓                              │
 │                              GeminiService.analyze_image     │
 │                                ↓                              │
-│                              gemini-3.1-flash (multimodal)   │
+│                              gemini-2.5-flash (multimodal)   │
 │                                                              │
 │   /ws/voice  ─→ VoiceAgent (Gemini Live WS bridge)           │
 │                  ↕ proxies audio frames bidirectionally       │
-│                  gemini-3.1-flash-live-preview                │
+│                  gemini-2.5-flash-native-audio-latest                │
 │                                                              │
 │   All endpoints → Supabase (RLS-gated user data)             │
 └─────────────────────────────────────────────────────────────┘

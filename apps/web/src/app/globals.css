@@ -8,6 +8,11 @@
 ═══════════════════════════════════════════════════════ */
 @layer base {
   :root {
+    /* fonts — set CSS variables for Tailwind to read (font-display/body/mono utilities) */
+    --font-display: 'Bricolage Grotesque', system-ui, -apple-system, sans-serif;
+    --font-body: 'DM Sans', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
     /* paper */
     --paper: #FFFBF3;
     --paper-2: #F7F1E4;

@@ -27,7 +27,7 @@ Browser uses Supabase Auth SDK; the backend doesn't expose login endpoints. JWT 
 
 ### `GET /health` → 200
 ```json
-{"ok": true, "models": {"text": "gemini-3.1-flash", "live": "gemini-3.1-flash-live-preview", ...}}
+{"ok": true, "models": {"text": "gemini-2.5-flash", "live": "gemini-2.5-flash-native-audio-latest", ...}}
 ```
 
 ### `GET /v1/courses` → 200

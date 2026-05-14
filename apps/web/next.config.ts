@@ -12,10 +12,6 @@ const supabaseHost = (() => {
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  experimental: {
-    // Keep React Compiler off for stability while screens are scaffolded.
-    reactCompiler: false,
-  },
   typescript: {
     ignoreBuildErrors: false,
   },
@@ -24,7 +20,6 @@ const nextConfig: NextConfig = {
   },
   images: {
     remotePatterns: [
-      // Allow any Supabase Storage public bucket (configured via NEXT_PUBLIC_SUPABASE_URL).
       ...(supabaseHost
         ? [
             {
@@ -34,7 +29,6 @@ const nextConfig: NextConfig = {
             },
           ]
         : []),
-      // Permit local Supabase Storage during development.
       {
         protocol: 'http' as const,
         hostname: '127.0.0.1',

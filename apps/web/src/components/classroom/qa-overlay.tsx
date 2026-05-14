@@ -1,0 +1,226 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+
+import { AriaMascot } from '@/components/aria/aria-mascot';
+import { Icon } from '@/components/aria/icon';
+import { QAAnswerSVG, type QATopic } from '@/components/classroom/qa-answer-svg';
+import { streamSSE } from '@/lib/sse';
+import { cn } from '@/lib/utils';
+
+type Stage = 'input' | 'asked' | 'answered';
+
+interface QAOverlayProps {
+  active: boolean;
+  onClose: () => void;
+  /** When set (e.g. from voice mode), auto-ask the given question. */
+  initialQ: string | null;
+  sessionId: string | null;
+}
+
+interface SSEPayload {
+  type: 'token' | 'done' | 'error';
+  content?: string;
+  message?: string;
+}
+
+const CHIPS = [
+  "What's amplitude again?",
+  'How is wavelength different from period?',
+  'Can you show me v = f · λ on the board?',
+  'What units is frequency in?',
+];
+
+function topicForQuestion(text: string): QATopic {
+  const lower = text.toLowerCase();
+  if (/amplitude|height|energy|tall/.test(lower)) return 'amplitude';
+  if (/wavelength|λ|lambda|distance|cycle/.test(lower)) return 'wavelength';
+  return 'equation';
+}
+
+/**
+ * "Raise hand" overlay — student asks Aria a question; Aria streams a
+ * Socratic answer over SSE while a topic-matched chalk diagram animates
+ * onto the board.
+ *
+ * The SSE call POSTs to `/v1/sessions/{sessionId}/qa`. When `sessionId`
+ * is null (offline / unauthenticated) we still surface the input UI but
+ * skip the stream and show a placeholder.
+ */
+export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayProps) {
+  const [stage, setStage] = useState<Stage>('input');
+  const [q, setQ] = useState('');
+  const [topic, setTopic] = useState<QATopic>(null);
+  const [answer, setAnswer] = useState('');
+  const [streaming, setStreaming] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Reset state whenever overlay opens/closes.
+  useEffect(() => {
+    if (!active) {
+      setStage('input');
+      setQ('');
+      setTopic(null);
+      setAnswer('');
+      setStreaming(false);
+      abortRef.current?.abort();
+      abortRef.current = null;
+    }
+  }, [active]);
+
+  // Auto-ask when launched via voice with an initial question.
+  useEffect(() => {
+    if (active && initialQ) {
+      void ask(initialQ);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, initialQ]);
+
+  const ask = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setQ(trimmed);
+    setTopic(topicForQuestion(trimmed));
+    setStage('asked');
+    setAnswer('');
+    setStreaming(true);
+
+    abortRef.current?.abort();
+    const ctl = new AbortController();
+    abortRef.current = ctl;
+
+    // Drive the chalk-answer animation in tandem with the SSE stream.
+    setTimeout(() => setStage('answered'), 600);
+
+    if (!sessionId) {
+      // No backend session — show a static fallback after the diagram animates.
+      setTimeout(() => {
+        setAnswer(
+          "I'm still warming up — try again in a moment. Meanwhile, take a look at the diagram I just drew.",
+        );
+        setStreaming(false);
+      }, 1200);
+      return;
+    }
+
+    try {
+      const iter = streamSSE<SSEPayload>(`/v1/sessions/${sessionId}/qa`, {
+        json: { question: trimmed, source: 'text' },
+        signal: ctl.signal,
+      });
+      for await (const ev of iter) {
+        if (ev.type === 'token' && ev.content) {
+          setAnswer((a) => a + ev.content);
+        } else if (ev.type === 'done') {
+          break;
+        } else if (ev.type === 'error') {
+          setAnswer((a) => (a ? a : `Sorry — I couldn't fetch that just now. (${ev.message ?? ''})`));
+          break;
+        }
+      }
+    } catch (e) {
+      if ((e as { name?: string }).name !== 'AbortError') {
+        setAnswer(
+          (a) => a || "Hmm — I lost the connection. Try asking again in a sec.",
+        );
+      }
+    } finally {
+      setStreaming(false);
+    }
+  };
+
+  return (
+    <div className={cn('qa-ov', active && 'active')}>
+      <div className="qa-dim" />
+      <QAAnswerSVG topic={stage === 'answered' ? topic : null} />
+
+      {stage !== 'input' && (
+        <div className="qa-q">
+          <div className="qa-q-lbl">👋 You asked</div>
+          <div className="qa-q-txt">&quot;{q}&quot;</div>
+        </div>
+      )}
+
+      {stage === 'answered' && (
+        <div className="qa-aria">
+          <div className="qa-aria-hd">
+            <AriaMascot size={28} speaking={streaming} />
+            <span className="name">Prof. Aria · answering</span>
+          </div>
+          <div className="qa-aria-txt">
+            {answer || (streaming ? <em>Thinking…</em> : <em>Ready when you are.</em>)}
+          </div>
+        </div>
+      )}
+
+      {stage === 'input' && (
+        <div className="qa-chips">
+          {CHIPS.map((c) => (
+            <button key={c} type="button" className="qa-chip" onClick={() => void ask(c)}>
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="qa-bar">
+        {stage === 'input' ? (
+          <>
+            <textarea
+              className="qa-ta"
+              placeholder="Ask Prof. Aria anything…"
+              rows={1}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && q.trim()) {
+                  e.preventDefault();
+                  void ask(q);
+                }
+              }}
+              autoFocus
+            />
+            <button
+              type="button"
+              className="qa-send"
+              disabled={!q.trim()}
+              onClick={() => q.trim() && void ask(q)}
+              style={{ opacity: q.trim() ? 1 : 0.5 }}
+            >
+              <Icon name="send" size={20} />
+            </button>
+            <button type="button" className="qa-resume" onClick={onClose}>
+              <Icon name="play" size={14} /> Resume
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="qa-resume"
+              onClick={() => {
+                abortRef.current?.abort();
+                setStage('input');
+                setQ('');
+                setAnswer('');
+                setTopic(null);
+              }}
+              style={{ flex: 1, justifyContent: 'center' }}
+            >
+              Ask another
+            </button>
+            <button
+              type="button"
+              className="qa-send"
+              style={{ width: 'auto', padding: '0 22px' }}
+              onClick={onClose}
+            >
+              <Icon name="play" size={16} />
+              <span style={{ marginLeft: 8, fontSize: 14, fontWeight: 700 }}>Got it · Resume</span>
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

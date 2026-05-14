@@ -1,0 +1,93 @@
+'use client';
+
+import { useRouter } from 'next/navigation';
+
+import { cn } from '@/lib/utils';
+
+export interface HistoryRowData {
+  t: string;
+  s: string;
+  d: string;
+  score: number;
+  status?: string;
+}
+
+export interface HistoryRowProps {
+  row: HistoryRowData;
+}
+
+/**
+ * One lesson-history row — chalk thumbnail, title/meta, date, score, replay.
+ *
+ * Ported from `.hist-row` in the prototype.
+ */
+export function HistoryRow({ row }: HistoryRowProps) {
+  const router = useRouter();
+  const target = '/classroom/wave-properties-anatomy';
+  const goto = () => router.push(target);
+  const isLow = row.score < 75;
+
+  return (
+    <div
+      onClick={goto}
+      className={cn(
+        'mb-2 grid cursor-pointer items-center gap-[18px] rounded-[14px] border border-border bg-white px-5 py-4 transition-all',
+        'hover:-translate-y-px hover:shadow-md',
+      )}
+      style={{ gridTemplateColumns: '80px 1fr auto auto auto' }}
+    >
+      <div className="relative h-[50px] w-20 overflow-hidden rounded-lg bg-board">
+        <svg
+          viewBox="0 0 80 50"
+          preserveAspectRatio="none"
+          className="absolute inset-0 h-full w-full"
+        >
+          <path
+            d="M2,30 Q12,8 22,30 T42,30 T62,30 T78,30"
+            fill="none"
+            stroke="#A8C4E8"
+            strokeWidth="1.5"
+            opacity={row.score / 100}
+          />
+          <line
+            x1="2"
+            y1="30"
+            x2="78"
+            y2="30"
+            stroke="rgba(255,255,255,.18)"
+            strokeWidth=".5"
+            strokeDasharray="3,2"
+          />
+        </svg>
+      </div>
+      <div>
+        <div className="text-sm font-semibold tracking-[-0.005em]">{row.t}</div>
+        <div className="mt-0.5 text-xs text-ink-3">
+          {row.s}
+          {row.status ? ` · ${row.status}` : ''}
+        </div>
+      </div>
+      <div className="min-w-[80px] text-right font-mono text-xs text-ink-3">
+        {row.d}
+      </div>
+      <div
+        className={cn(
+          'flex items-center gap-1.5 rounded-lg px-3 py-[5px] text-[13px] font-bold',
+          isLow ? 'bg-coral-soft text-[#A1452B]' : 'bg-mint-soft text-[#1C7A47]',
+        )}
+      >
+        {row.score}%
+      </div>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          router.push(target);
+        }}
+        className="rounded-[9px] bg-ink px-3.5 py-[7px] text-xs font-semibold text-white"
+      >
+        Replay
+      </button>
+    </div>
+  );
+}

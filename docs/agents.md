@@ -33,13 +33,13 @@ Rules:
 ### VisionAgent
 
 - Receives a PNG (data URL) of the student's sketch on the chalkboard.
-- Calls `gemini-3.1-flash` multimodal with prompt: "Look at this student sketch. The current lesson is about [topic]. What did the student likely draw? Respond with JSON: `{shape: 'wave|line|equation|arrow|other', confidence: 0-1, intent: 'string'}`. Be specific."
+- Calls `gemini-2.5-flash` multimodal with prompt: "Look at this student sketch. The current lesson is about [topic]. What did the student likely draw? Respond with JSON: `{shape: 'wave|line|equation|arrow|other', confidence: 0-1, intent: 'string'}`. Be specific."
 - Fallback to client-side geometric heuristics (`recognizeStroke` from prototype) if API errors.
 - Hands result back to SocraticAgent for response generation.
 
 ### VoiceAgent
 
-- Holds a persistent WebSocket session to Gemini Live API (`gemini-3.1-flash-live-preview`).
+- Holds a persistent WebSocket session to Gemini Live API (`gemini-2.5-flash-native-audio-latest`).
 - Browser opens WS to FastAPI; FastAPI opens WS to Gemini; bidirectional audio frames are proxied.
 - Surfaces transcripts to the UI for caption display.
 - Reconnect logic with state recovery on drops.
@@ -55,7 +55,7 @@ Rules:
 - Nightly job (or on-demand).
 - Reads topic_progress, schedule_blocks, target_score, days_until_exam.
 - Generates a 7-day plan: lessons in priority order, quiz days, spaced-repetition flashcard slots.
-- Uses `gemini-3.1-pro` for the complex constraint reasoning.
+- Uses `gemini-2.5-pro` for the complex constraint reasoning.
 
 ## State machine (lesson session)
 

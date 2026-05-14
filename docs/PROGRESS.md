@@ -10,9 +10,9 @@ Updated continuously during the autonomous overnight build.
 - [x] pnpm workspace + Turborepo configured
 - [x] README + docs scaffold
 - [x] Latest model names confirmed via web search (Apr 2026)
-  - `gemini-3.1-flash` (text + vision)
-  - `gemini-3.1-flash-live-preview` (voice)
-  - `gemini-3.1-pro` (reasoning)
+  - `gemini-2.5-flash` (text + vision)
+  - `gemini-2.5-flash-native-audio-latest` (voice)
+  - `gemini-2.5-pro` (reasoning)
   - `gemini-embedding-001`
 - [x] `google-genai` Python SDK v2.2.0 chosen (replaces deprecated `google-generativeai`)
 
@@ -64,14 +64,15 @@ Updated continuously during the autonomous overnight build.
 - ✅ Components: floating-chip, live-board (chalkboard mock)
 - Running final typecheck/build/lint
 
-### 🟡 Agent S2 — In-app screens (Dashboard, Planner, Notes, History)
-- ✅ (app)/layout.tsx + app-chrome client wrapper
-- ✅ Dashboard with hero, course cards, curriculum, today's schedule
-- ✅ Planner with 7-day grid
-- ✅ Notes with tabs (Notes / Flashcards)
-- ✅ History with chalk thumbnails
-- ✅ 8 dashboard sub-components extracted
-- Running final typecheck/build/lint
+### ✅ Agent S2 — In-app screens (Dashboard, Planner, Notes, History) — DONE
+- (app)/layout.tsx + app-chrome client wrapper (Server Component → Client wrapper pattern for usePathname)
+- Dashboard: hero with stats, 3 course cards, expandable curriculum (Unit 4 default open), today's schedule (4 rows), streak card
+- Planner: 7-day grid (Tue 13 = today), color-coded blocks (mint/indigo/amber/coral/lavender), sidebar with goals/Aria note/weekly stats
+- Notes: Tab between Notes (9-card grid, sticky-note styling) and Flashcards (6 decks with mastery %)
+- History: 9 rows with chalk-thumb SVG, score color-coding, replay button
+- 8 dashboard sub-components extracted (app-chrome, curriculum-unit, today-row, streak-card, week-day-column, note-card, deck-row, history-row)
+- pnpm typecheck/build/start all clean; all 4 routes return HTTP 200
+- Dashboard uses TanStack Query for /v1/courses with fallback to local data
 
 ### 🟡 Agent S3 — Classroom + Q&A + Quiz + Complete + sketch/voice/reactions
 - Heaviest scope — still ramping up

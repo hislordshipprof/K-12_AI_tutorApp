@@ -23,13 +23,15 @@ class Settings(BaseSettings):
     )
 
     # ── Gemini ──────────────────────────────────────────────────────────────
+    # Defaults are STABLE GA models verified via the live `models.list()` API.
+    # Override via env to opt into previews (e.g. gemini-3.1-pro-preview).
     gemini_api_key: SecretStr = Field(default=SecretStr(""), alias="GEMINI_API_KEY")
-    gemini_model_text: str = Field(default="gemini-3.1-flash", alias="GEMINI_MODEL_TEXT")
-    gemini_model_vision: str = Field(default="gemini-3.1-flash", alias="GEMINI_MODEL_VISION")
+    gemini_model_text: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL_TEXT")
+    gemini_model_vision: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL_VISION")
     gemini_model_live: str = Field(
-        default="gemini-3.1-flash-live-preview", alias="GEMINI_MODEL_LIVE"
+        default="gemini-2.5-flash-native-audio-latest", alias="GEMINI_MODEL_LIVE"
     )
-    gemini_model_pro: str = Field(default="gemini-3.1-pro", alias="GEMINI_MODEL_PRO")
+    gemini_model_pro: str = Field(default="gemini-2.5-pro", alias="GEMINI_MODEL_PRO")
     gemini_model_embed: str = Field(
         default="gemini-embedding-001", alias="GEMINI_MODEL_EMBED"
     )

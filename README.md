@@ -24,20 +24,20 @@
    ┌───────────┼────────────┐
    ▼           ▼            ▼
 Gemini API  Supabase    pgvector
-(3.1 Flash, (Postgres, (lesson
- Live,       Auth,      embeddings)
- Embed)      Realtime,
-             Storage)
+(2.5 Flash, (Postgres, (lesson
+ Native      Auth,      embeddings)
+ Audio,      Realtime,
+ Embed)      Storage)
 ```
 
 ## Models used (April 2026)
 
 | Purpose | Model |
 |---|---|
-| Text Q&A, lesson narration, Socratic responses | `gemini-3.1-flash` |
-| Vision (sketch analysis) | `gemini-3.1-flash` |
-| Real-time voice (bidirectional) | `gemini-3.1-flash-live-preview` |
-| Heavy reasoning (planner agent) | `gemini-3.1-pro` |
+| Text Q&A, lesson narration, Socratic responses | `gemini-2.5-flash` |
+| Vision (sketch analysis) | `gemini-2.5-flash` |
+| Real-time voice (bidirectional) | `gemini-2.5-flash-native-audio-latest` |
+| Heavy reasoning (planner agent) | `gemini-2.5-pro` |
 | Embeddings (lesson search) | `gemini-embedding-001` |
 
 ## Monorepo layout
