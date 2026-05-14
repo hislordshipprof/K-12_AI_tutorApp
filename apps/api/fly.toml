@@ -1,0 +1,57 @@
+# fly.toml — Fly.io deployment for the K-12 AI Tutor FastAPI backend.
+#
+# After running `fly launch` you'll generate an `app` name; replace `k12-tutor-api`
+# below if needed. Secrets are set separately:
+#
+#   fly secrets set \
+#     GEMINI_API_KEY=... \
+#     SUPABASE_URL=https://your-project.supabase.co \
+#     SUPABASE_ANON_KEY=... \
+#     SUPABASE_SERVICE_ROLE_KEY=... \
+#     SUPABASE_JWT_SECRET=... \
+#     CORS_ORIGINS=https://your-frontend.vercel.app
+#
+# Deploy: `fly deploy --remote-only`
+
+app = "k12-tutor-api"
+primary_region = "iad"     # Virginia — close to most US users; change if needed
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  API_HOST = "0.0.0.0"
+  API_PORT = "8000"
+  LOG_LEVEL = "INFO"
+  GEMINI_MODEL_TEXT = "gemini-3.1-flash"
+  GEMINI_MODEL_VISION = "gemini-3.1-flash"
+  GEMINI_MODEL_LIVE = "gemini-3.1-flash-live-preview"
+  GEMINI_MODEL_PRO = "gemini-3.1-pro"
+  GEMINI_MODEL_EMBED = "gemini-embedding-001"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  # min_machines_running = 1 keeps the WebSocket bridge warm for voice mode.
+  # If voice usage is low, set to 0 and accept cold starts on /ws/voice.
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[deploy]
+  release_command = "echo 'release-noop'"
+  strategy = "rolling"

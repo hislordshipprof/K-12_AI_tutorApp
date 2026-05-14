@@ -1,0 +1,36 @@
+# Secrets — NEVER bake into images.
+.env
+.env.*
+*.pem
+*.key
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Tests & dev tooling
+tests/
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+
+# Notes / scratch
+*.md
+!README.md

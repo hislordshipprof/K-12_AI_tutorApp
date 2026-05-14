@@ -1,0 +1,43 @@
+#!/bin/sh
+# Secrets-scan pre-commit hook
+# Install: cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+
+set -e
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+# Exclude example/docs files from secret scanning
+FILES_TO_SCAN=$(echo "$STAGED" | grep -vE "(\.example$|docs/)" || true)
+
+if [ -n "$FILES_TO_SCAN" ]; then
+  # Scan staged content (not the working tree)
+  for f in $FILES_TO_SCAN; do
+    if [ -f "$f" ]; then
+      LEAK=$(git show ":$f" 2>/dev/null | grep -nE "AIza[0-9A-Za-z_-]{35}|sk-[0-9A-Za-z]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN.*PRIVATE KEY-----" || true)
+      if [ -n "$LEAK" ]; then
+        echo "✗ Possible secret in $f:"
+        echo "$LEAK"
+        echo ""
+        echo "If this is a false positive, force the commit with: git commit --no-verify"
+        echo "But please double-check — leaked keys can cost real money."
+        exit 1
+      fi
+    fi
+  done
+fi
+
+# Block any .env file from being committed
+ENV_FILES=$(echo "$STAGED" | grep -E "(^|/)\.env($|\.[a-z]+$)" | grep -v "\.example$" || true)
+if [ -n "$ENV_FILES" ]; then
+  echo "✗ Refusing to commit .env files:"
+  echo "$ENV_FILES"
+  echo ""
+  echo "These are gitignored intentionally. If you really need to override:"
+  echo "  git commit --no-verify"
+  exit 1
+fi
+
+exit 0
