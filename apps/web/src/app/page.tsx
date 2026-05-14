@@ -97,24 +97,9 @@ export default function HomePage() {
             </div>
 
             <div className="flex items-center gap-[18px] text-[13px] text-ink-3">
-              <div className="flex">
-                <div className="-ml-2 grid h-[30px] w-[30px] place-items-center rounded-full border-2 border-paper bg-gradient-to-br from-coral to-amber text-[11px] font-bold text-white first:ml-0">
-                  MJ
-                </div>
-                <div className="-ml-2 grid h-[30px] w-[30px] place-items-center rounded-full border-2 border-paper bg-gradient-to-br from-lavender to-indigo text-[11px] font-bold text-white">
-                  SR
-                </div>
-                <div className="-ml-2 grid h-[30px] w-[30px] place-items-center rounded-full border-2 border-paper bg-gradient-to-br from-mint to-sky text-[11px] font-bold text-white">
-                  DK
-                </div>
-                <div className="-ml-2 grid h-[30px] w-[30px] place-items-center rounded-full border-2 border-paper bg-gradient-to-br from-amber to-coral text-[11px] font-bold text-white">
-                  AL
-                </div>
-              </div>
-              <div>
-                <b className="font-bold text-ink">4,200 students</b> studying
-                right now
-              </div>
+              <span>
+                Free during beta · No credit card · Cancel anytime
+              </span>
             </div>
           </div>
 
@@ -161,10 +146,10 @@ export default function HomePage() {
             </div>
             <div className="flex flex-col gap-2">
               <div className="font-display text-[34px] font-bold leading-none tracking-[-0.03em] text-ink">
-                7 <em className="not-italic text-indigo">APs</em>
+                3 <em className="not-italic text-indigo">APs</em>
               </div>
               <div className="text-[13px] leading-[1.4] text-ink-3">
-                Full College Board curriculum, expanding fast.
+                Physics 1, Calc BC, Biology — aligned to the 2024 CEDs.
               </div>
             </div>
             <div className="flex flex-col gap-2">

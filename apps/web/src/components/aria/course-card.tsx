@@ -7,8 +7,8 @@ import { cn } from '@/lib/utils';
 export interface CourseCardProps {
   name: string;
   meta: string;
-  /** Progress 0–100. */
-  pct: number;
+  /** Progress 0–100, or `null` when the user has no progress yet (renders "—"). */
+  pct: number | null;
   /** Any valid CSS color/gradient string for the card header. */
   color: string;
   /** Glyph / emoji / Icon node rendered top-right. */
@@ -36,7 +36,8 @@ export function CourseCard({
   onClick,
   tag = 'AP Course',
 }: CourseCardProps) {
-  const clampedPct = Math.max(0, Math.min(100, pct));
+  const hasPct = typeof pct === 'number';
+  const clampedPct = hasPct ? Math.max(0, Math.min(100, pct!)) : 0;
 
   return (
     <button
@@ -72,7 +73,7 @@ export function CourseCard({
             />
           </div>
           <div className="text-[11px] font-bold tabular-nums text-ink-2">
-            {clampedPct}%
+            {hasPct ? `${clampedPct}%` : '—'}
           </div>
         </div>
       </div>

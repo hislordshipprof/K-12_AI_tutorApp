@@ -62,6 +62,6 @@ test.describe('Marketing → onboarding → dashboard', () => {
       page.getByRole('button', { name: /open my classroom/i }),
       /\/dashboard$/,
     );
-    await expect(page.getByText(/Good morning,\s*Alex/i)).toBeVisible();
+    await expect(page.getByText(/Good morning,/i)).toBeVisible();
   });
 });

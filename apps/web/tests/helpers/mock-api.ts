@@ -102,8 +102,111 @@ export async function installMockApi(
       return;
     }
 
-    // --- Courses ---
+    // --- Courses (real shape so the dashboard renders the three cards) ---
     if (/\/v1\/courses\/?$/.test(path)) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: '11111111-1111-1111-1111-111111111111',
+            slug: 'ap-physics-1',
+            title: 'AP Physics 1',
+            exam: 'AP',
+            color_gradient: 'linear-gradient(135deg,#1F4E7A 0%,#5B5BE5 100%)',
+            icon_emoji: '⚛️',
+            sort_order: 1,
+          },
+          {
+            id: '22222222-2222-2222-2222-222222222222',
+            slug: 'ap-calc-bc',
+            title: 'AP Calculus BC',
+            exam: 'AP',
+            color_gradient: 'linear-gradient(135deg,#7A1F4E 0%,#E55B9C 100%)',
+            icon_emoji: '∫',
+            sort_order: 2,
+          },
+          {
+            id: '33333333-3333-3333-3333-333333333333',
+            slug: 'ap-biology',
+            title: 'AP Biology',
+            exam: 'AP',
+            color_gradient: 'linear-gradient(135deg,#1F7A4E 0%,#5BE59C 100%)',
+            icon_emoji: '🧬',
+            sort_order: 3,
+          },
+        ]),
+      });
+      return;
+    }
+
+    // --- Course units tree (curriculum view) ---
+    if (/\/v1\/courses\/[^/]+\/units\/?$/.test(path)) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 'u1',
+            n: 1,
+            name: 'Kinematics',
+            topics: [
+              { id: 't1', n: 1, name: 'Position & Velocity', duration_min: 12 },
+            ],
+          },
+        ]),
+      });
+      return;
+    }
+
+    // --- Planner week ---
+    if (/\/v1\/planner\/week\/?$/.test(path)) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ week_start: '2026-05-11', blocks: [] }),
+      });
+      return;
+    }
+
+    // --- /v1/me ---
+    if (/\/v1\/me\/?$/.test(path)) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: '00000000-0000-0000-0000-000000000001',
+          full_name: 'Alex Johnson',
+          avatar_color: '#5B5BE5',
+          streak_days: 5,
+          stats: { topics_done: 12, time_spent_min: 210, quiz_avg_pct: 87 },
+        }),
+      });
+      return;
+    }
+
+    // --- /v1/notes (list) ---
+    if (/\/v1\/notes\/?$/.test(path) && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+      return;
+    }
+
+    // --- /v1/history ---
+    if (/\/v1\/history\/?$/.test(path)) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+      return;
+    }
+
+    // --- /v1/flashcards/due ---
+    if (/\/v1\/flashcards\/due\/?$/.test(path)) {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',

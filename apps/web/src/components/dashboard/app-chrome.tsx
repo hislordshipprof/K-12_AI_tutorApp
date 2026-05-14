@@ -5,6 +5,7 @@ import { useMemo, type ReactNode } from 'react';
 
 import { Rail, type RailScreen } from '@/components/aria/rail';
 import { TopNav, type TopNavCrumb } from '@/components/aria/top-nav';
+import { useMe } from '@/hooks/use-me';
 
 const ROUTE_TO_SCREEN: Record<string, RailScreen> = {
   '/dashboard': 'dashboard',
@@ -39,6 +40,7 @@ const CRUMBS: Record<string, TopNavCrumb> = {
 export function AppChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? '/dashboard';
   const router = useRouter();
+  const { data: me } = useMe();
 
   const { current, crumb } = useMemo(() => {
     const key = Object.keys(ROUTE_TO_SCREEN).find((p) => pathname.startsWith(p));
@@ -52,8 +54,8 @@ export function AppChrome({ children }: { children: ReactNode }) {
     <div className="flex h-screen flex-col bg-paper">
       <TopNav
         crumb={crumb ?? null}
-        streak={5}
-        name="Alex Johnson"
+        streak={me?.streak_days ?? 0}
+        name={me?.full_name ?? 'Guest'}
         onLogo={() => router.push('/')}
       />
       <div className="flex min-h-0 flex-1">

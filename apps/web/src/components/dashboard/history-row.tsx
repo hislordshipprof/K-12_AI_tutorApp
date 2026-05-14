@@ -8,7 +8,8 @@ export interface HistoryRowData {
   t: string;
   s: string;
   d: string;
-  score: number;
+  /** Optional — `undefined` when the user hasn't taken the quiz for this lesson yet. */
+  score?: number;
   status?: string;
 }
 
@@ -25,7 +26,8 @@ export function HistoryRow({ row }: HistoryRowProps) {
   const router = useRouter();
   const target = '/classroom/wave-properties-anatomy';
   const goto = () => router.push(target);
-  const isLow = row.score < 75;
+  const hasScore = typeof row.score === 'number';
+  const isLow = hasScore && row.score! < 75;
 
   return (
     <div
@@ -47,7 +49,7 @@ export function HistoryRow({ row }: HistoryRowProps) {
             fill="none"
             stroke="#A8C4E8"
             strokeWidth="1.5"
-            opacity={row.score / 100}
+            opacity={hasScore ? row.score! / 100 : 0.4}
           />
           <line
             x1="2"
@@ -73,10 +75,14 @@ export function HistoryRow({ row }: HistoryRowProps) {
       <div
         className={cn(
           'flex items-center gap-1.5 rounded-lg px-3 py-[5px] text-[13px] font-bold',
-          isLow ? 'bg-coral-soft text-[#A1452B]' : 'bg-mint-soft text-[#1C7A47]',
+          !hasScore
+            ? 'bg-paper-2 text-ink-3'
+            : isLow
+              ? 'bg-coral-soft text-[#A1452B]'
+              : 'bg-mint-soft text-[#1C7A47]',
         )}
       >
-        {row.score}%
+        {hasScore ? `${row.score}%` : '—'}
       </div>
       <button
         type="button"

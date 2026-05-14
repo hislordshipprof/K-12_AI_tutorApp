@@ -1,61 +1,99 @@
 'use client';
 
-import { WeekDayColumn, type WeekDay } from '@/components/dashboard/week-day-column';
+import { useQuery } from '@tanstack/react-query';
 
-const DAYS: WeekDay[] = [
-  {
-    d: 'Mon',
-    n: 12,
-    blocks: [
-      { c: 'mint done', t: 'Wave Intro', m: '✓ 12m' },
-      { c: 'mint done', t: 'Crests + Troughs', m: '✓ 14m' },
-    ],
-  },
-  {
-    d: 'Tue',
-    n: 13,
-    today: true,
-    blocks: [
-      { c: 'indigo', t: 'Wave Properties', m: '18m · lesson' },
-      { c: 'amber', t: 'Equation drill', m: '15m · quiz' },
-      { c: 'coral', t: 'Office hours', m: '30m · Aria' },
-      { c: 'amber', t: 'Flashcards', m: '8m' },
-    ],
-  },
-  {
-    d: 'Wed',
-    n: 14,
-    blocks: [
-      { c: 'indigo', t: 'Wave Speed', m: '14m · lesson' },
-      { c: 'lav', t: 'FRQ workshop', m: '25m' },
-    ],
-  },
-  {
-    d: 'Thu',
-    n: 15,
-    blocks: [
-      { c: 'indigo', t: 'Superposition', m: '20m · lesson' },
-      { c: 'amber', t: 'Practice set', m: '8 problems' },
-    ],
-  },
-  {
-    d: 'Fri',
-    n: 16,
-    blocks: [{ c: 'indigo', t: 'Standing Waves', m: '16m · lesson' }],
-  },
-  {
-    d: 'Sat',
-    n: 17,
-    blocks: [{ c: 'lav', t: 'Unit 4 mock', m: '45m · exam' }],
-  },
-  {
-    d: 'Sun',
-    n: 18,
-    blocks: [{ c: 'mint', t: 'Light day ✨', m: 'rest' }],
-  },
-];
+import {
+  WeekDayColumn,
+  type WeekBlockColor,
+  type WeekDay,
+} from '@/components/dashboard/week-day-column';
+import { useMe } from '@/hooks/use-me';
+import { api } from '@/lib/api';
+
+interface PlannerBlock {
+  id?: string;
+  date: string;          // ISO date "YYYY-MM-DD"
+  start_time?: string | null;
+  duration_min?: number | null;
+  kind: 'lesson' | 'quiz' | 'flashcards' | 'office_hours' | 'rest';
+  payload?: Record<string, unknown> | null;
+  status?: 'planned' | 'done' | 'skipped';
+}
+
+interface PlannerWeek {
+  week_start: string; // ISO Monday
+  blocks: PlannerBlock[];
+}
+
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
+
+function addDays(iso: string, days: number): { iso: string; n: number } {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return { iso: d.toISOString().slice(0, 10), n: d.getUTCDate() };
+}
+
+function todayISODate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function colorFor(kind: PlannerBlock['kind'], status?: PlannerBlock['status']): WeekBlockColor {
+  if (status === 'done') return 'mint done';
+  switch (kind) {
+    case 'lesson': return 'indigo';
+    case 'quiz': return 'amber';
+    case 'flashcards': return 'amber';
+    case 'office_hours': return 'coral';
+    case 'rest': return 'mint';
+    default: return 'lav';
+  }
+}
+
+function metaFor(b: PlannerBlock): string {
+  const dur = b.duration_min ? `${b.duration_min}m` : '';
+  const kind = b.kind.replace('_', ' ');
+  return [dur, kind].filter(Boolean).join(' · ');
+}
+
+function titleFor(b: PlannerBlock): string {
+  const title = (b.payload?.title as string | undefined) ?? '';
+  return title || b.kind.replace('_', ' ');
+}
 
 export default function PlannerPage() {
+  const { data: me } = useMe();
+
+  const { data: week } = useQuery<PlannerWeek | null>({
+    queryKey: ['planner-week'],
+    queryFn: async () => {
+      try {
+        return await api<PlannerWeek>('/v1/planner/week');
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+
+  const today = todayISODate();
+  const weekStart = week?.week_start ?? today;
+  const days: WeekDay[] = DAY_LABELS.map((label, i) => {
+    const { iso, n } = addDays(weekStart, i);
+    const dayBlocks = (week?.blocks ?? []).filter((b) => b.date === iso);
+    return {
+      d: label,
+      n,
+      today: iso === today,
+      blocks: dayBlocks.map((b) => ({
+        c: colorFor(b.kind, b.status),
+        t: titleFor(b),
+        m: metaFor(b),
+      })),
+    };
+  });
+
+  const hasAnyBlock = days.some((d) => d.blocks.length > 0);
+
   return (
     <div className="bg-paper">
       {/* HEADER */}
@@ -94,8 +132,16 @@ export default function PlannerPage() {
       {/* BODY */}
       <div className="mx-auto grid max-w-[1180px] grid-cols-1 gap-5 px-8 pb-20 lg:grid-cols-[1fr_280px]">
         <div>
+          {!hasAnyBlock && (
+            <div className="mb-4 rounded-2xl border border-dashed border-border bg-white px-6 py-8 text-center">
+              <div className="text-base font-semibold text-ink">No plan for this week yet</div>
+              <div className="mt-1 text-sm text-ink-3">
+                Aria will draft a study plan once you complete your first lesson, or click <b>Generate next →</b> to start one now.
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-7 gap-2">
-            {DAYS.map((day) => (
+            {days.map((day) => (
               <WeekDayColumn key={day.d} day={day} />
             ))}
           </div>
@@ -105,80 +151,30 @@ export default function PlannerPage() {
         <div className="flex flex-col gap-3.5">
           <div className="rounded-[18px] border border-border bg-white p-5 shadow-sm">
             <div className="mb-3 font-display text-base font-bold tracking-[-0.015em]">
-              This week&apos;s goal
-            </div>
-            <GoalRow done text="Finish Wave Intro" />
-            <GoalRow text="Master amplitude + wavelength" />
-            <GoalRow text="Score 85%+ on Unit 4 mock" />
-            <GoalRow text="Build 22-card wave deck" />
-          </div>
-
-          <div className="rounded-[18px] border border-indigo bg-indigo p-5 text-white shadow-sm">
-            <div className="mb-3 font-display text-base font-bold tracking-[-0.015em] text-white">
-              Aria&apos;s note
-            </div>
-            <p className="font-display text-[13px] italic leading-[1.55] opacity-[0.92]">
-              You&apos;re{' '}
-              <b className="not-italic text-amber">2 days ahead</b> of pace for
-              an AP 5 — nice. I lightened Sunday so you can rest. Push hard
-              Saturday on the mock and we&apos;re golden.
-            </p>
-            <button
-              type="button"
-              className="mt-3 rounded-[10px] bg-amber px-3.5 py-2 text-[13px] font-semibold text-[#5C3A00] transition-all hover:-translate-y-px"
-            >
-              Adjust plan
-            </button>
-          </div>
-
-          <div className="rounded-[18px] border border-border bg-white p-5 shadow-sm">
-            <div className="mb-3 font-display text-base font-bold tracking-[-0.015em]">
               Weekly stats
             </div>
-            <div className="mb-2 flex justify-between text-[13px]">
-              <span className="text-ink-3">Study time</span>
-              <b>4h 12m / 6h</b>
-            </div>
-            <div className="mb-3.5 h-1.5 rounded-[3px] bg-paper-2">
-              <div className="h-full w-[70%] rounded-[3px] bg-indigo" />
-            </div>
-            <div className="mb-2 flex justify-between text-[13px]">
-              <span className="text-ink-3">Quiz accuracy</span>
-              <b className="text-mint">87% ↑3</b>
-            </div>
             <div className="flex justify-between text-[13px]">
-              <span className="text-ink-3">Topics mastered</span>
-              <b>2 of 5</b>
+              <span className="text-ink-3">Topics done</span>
+              <b className="tabular-nums">{me?.stats.topics_done ?? 0}</b>
+            </div>
+            <div className="mt-2 flex justify-between text-[13px]">
+              <span className="text-ink-3">Time learned</span>
+              <b className="tabular-nums">
+                {me ? `${(me.stats.time_spent_min / 60).toFixed(1)}h` : '—'}
+              </b>
+            </div>
+            <div className="mt-2 flex justify-between text-[13px]">
+              <span className="text-ink-3">Quiz avg</span>
+              <b className="tabular-nums">
+                {me?.stats.quiz_avg_pct != null ? `${me.stats.quiz_avg_pct}%` : '—'}
+              </b>
+            </div>
+            <div className="mt-2 flex justify-between text-[13px]">
+              <span className="text-ink-3">Streak</span>
+              <b className="tabular-nums">{me?.streak_days ?? 0} days 🔥</b>
             </div>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function GoalRow({ text, done = false }: { text: string; done?: boolean }) {
-  return (
-    <div className="mb-2 flex items-center gap-2.5 rounded-[10px] bg-paper p-2.5">
-      <div
-        className={
-          done
-            ? 'relative h-[18px] w-[18px] flex-shrink-0 rounded-full border-2 border-mint bg-mint'
-            : 'relative h-[18px] w-[18px] flex-shrink-0 rounded-full border-2 border-border-2'
-        }
-      >
-        {done && (
-          <span className="absolute left-1 top-[1px] h-2 w-1 rotate-45 border-b-2 border-r-2 border-white" />
-        )}
-      </div>
-      <div
-        className={
-          done
-            ? 'flex-1 text-[13px] font-medium text-ink-3 line-through'
-            : 'flex-1 text-[13px] font-medium'
-        }
-      >
-        {text}
       </div>
     </div>
   );

@@ -6,91 +6,132 @@ import { useState } from 'react';
 
 import { Icon } from '@/components/aria/icon';
 import { CourseCard } from '@/components/aria/course-card';
-import { CurriculumUnit, type Unit } from '@/components/dashboard/curriculum-unit';
+import { CurriculumUnit } from '@/components/dashboard/curriculum-unit';
 import { StreakCard } from '@/components/dashboard/streak-card';
 import { TodayRow } from '@/components/dashboard/today-row';
+import { displayName, useMe } from '@/hooks/use-me';
 import { api } from '@/lib/api';
+
+// Shape returned by GET /v1/courses (Supabase row passthrough).
+interface CourseRow {
+  id: string;
+  slug: string;
+  title: string;
+  exam: string | null;
+  color_gradient: string | null;
+  icon_emoji: string | null;
+}
 
 interface CourseDto {
   id: string;
+  slug: string;
   name: string;
   meta: string;
-  pct: number;
+  pct: number | null;     // null when we don't know yet — render as "—"
   icon: string;
   color: string;
   active?: boolean;
 }
 
-const FALLBACK_COURSES: CourseDto[] = [
-  {
-    id: 'ap-physics-1',
-    name: 'AP Physics 1',
-    meta: '8 units · 48 topics',
-    pct: 28,
-    icon: '⚛️',
-    color: 'linear-gradient(135deg,#1F4E7A 0%,#5B5BE5 100%)',
-    active: true,
-  },
-  {
-    id: 'ap-calc-bc',
-    name: 'AP Calculus BC',
-    meta: '10 units · 60 topics',
-    pct: 12,
-    icon: '∫',
-    color: 'linear-gradient(135deg,#7C2D80 0%,#A78BFA 100%)',
-  },
-  {
-    id: 'ap-biology',
-    name: 'AP Biology',
-    meta: '8 units · 52 topics',
-    pct: 0,
-    icon: '🧬',
-    color: 'linear-gradient(135deg,#15693E 0%,#34C97A 100%)',
-  },
-];
+const DEFAULT_COURSE_COLOR = 'linear-gradient(135deg,#1F4E7A 0%,#5B5BE5 100%)';
 
-const UNITS: Unit[] = [
-  { id: 'u1', n: 1, name: 'Kinematics', count: 6, done: 6, status: 'done' },
-  { id: 'u2', n: 2, name: "Forces & Newton's Laws", count: 7, done: 4 },
-  { id: 'u3', n: 3, name: 'Energy & Momentum', count: 6, done: 1 },
-  {
-    id: 'u4',
-    n: 4,
-    name: 'Waves & Sound',
-    count: 7,
-    done: 1,
-    topics: [
-      { name: 'Introduction to Waves', dur: '12m', state: 'done' },
-      { name: 'Wave Properties & Anatomy', dur: '18m', state: 'current' },
-      { name: 'Wave Speed & Medium', dur: '14m' },
-      { name: 'Superposition & Interference', dur: '20m' },
-      { name: 'Standing Waves', dur: '16m' },
-      { name: 'Sound Waves & Doppler', dur: '22m' },
-      { name: 'Unit 4 Practice Exam', dur: '45m' },
-    ],
-  },
-  { id: 'u5', n: 5, name: 'Electric Charge & Force', count: 5, done: 0 },
-  { id: 'u6', n: 6, name: 'Circuits', count: 5, done: 0 },
-];
+interface UnitRow {
+  id: string;
+  n: number;
+  name: string;
+  topics: { id: string; n: number; name: string; duration_min: number | null }[];
+}
+
+interface PlannerBlock {
+  date: string;
+  start_time?: string | null;
+  duration_min?: number | null;
+  kind: string;
+  payload?: Record<string, unknown> | null;
+  status?: string;
+}
+
+interface PlannerWeek {
+  week_start: string;
+  blocks: PlannerBlock[];
+}
+
+function fmtDur(min: number | null): string {
+  return min ? `${min}m` : '';
+}
+
+function todayISODate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function prettyDate(): string {
+  return new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+}
 
 export default function DashboardPage() {
   const router = useRouter();
   const [openUnit, setOpenUnit] = useState<string | null>('u4');
 
-  // Sample remote fetch; falls back silently to local data so the page renders
-  // standalone before the FastAPI backend exists.
-  const { data: courses } = useQuery<CourseDto[]>({
+  // Real user profile + dashboard stats.
+  const { data: me } = useMe();
+
+  // Real curriculum tree from Supabase. The course cards are course rows;
+  // per-course progress requires a topic_progress aggregation we don't ship
+  // a dedicated endpoint for yet — we render `pct = null` ("—") rather than
+  // inventing a fake percentage.
+  const { data: courses = [] } = useQuery<CourseDto[]>({
     queryKey: ['courses'],
     queryFn: async () => {
+      const remote = await api<CourseRow[]>('/v1/courses');
+      return remote.map(
+        (c, i): CourseDto => ({
+          id: c.id,
+          slug: c.slug,
+          name: c.title,
+          meta: c.exam ? `${c.exam} course` : '—',
+          pct: null,
+          icon: c.icon_emoji ?? '📚',
+          color: c.color_gradient ?? DEFAULT_COURSE_COLOR,
+          active: i === 0,
+        }),
+      );
+    },
+    staleTime: 60_000,
+  });
+
+  // Curriculum tree — defaults to AP Physics 1 (the only course with seeded
+  // topic content as of 2026-05-14). When more content lands we can expand
+  // this to follow the active course card.
+  const activeSlug = courses.find((c) => c.active)?.slug ?? 'ap-physics-1';
+  const { data: units = [] } = useQuery<UnitRow[]>({
+    queryKey: ['course-units', activeSlug],
+    queryFn: async () => {
       try {
-        const remote = await api<CourseDto[]>('/v1/courses');
-        return remote.length > 0 ? remote : FALLBACK_COURSES;
+        return await api<UnitRow[]>(`/v1/courses/${activeSlug}/units`);
       } catch {
-        return FALLBACK_COURSES;
+        return [];
       }
     },
-    initialData: FALLBACK_COURSES,
+    enabled: Boolean(activeSlug),
+    staleTime: 60_000,
   });
+
+  const totalTopics = units.reduce((acc, u) => acc + u.topics.length, 0);
+
+  // Today's plan — fetch the week, filter to today's blocks.
+  const { data: planner } = useQuery<PlannerWeek | null>({
+    queryKey: ['planner-week'],
+    queryFn: async () => {
+      try {
+        return await api<PlannerWeek>('/v1/planner/week');
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+  const today = todayISODate();
+  const todayBlocks = (planner?.blocks ?? []).filter((b) => b.date === today);
 
   const goClassroom = () => router.push('/classroom/wave-properties-anatomy');
 
@@ -117,36 +158,55 @@ export default function DashboardPage() {
               <span className="inline-block">👋</span> &nbsp;Welcome back
             </div>
             <h1 className="mb-2.5 font-display text-[44px] font-bold leading-[1.05] tracking-[-0.03em] text-white">
-              Good morning, <em className="not-italic text-amber italic">Alex</em>
+              Good morning, <em className="not-italic text-amber italic">{displayName(me)}</em>
             </h1>
             <p className="mb-[22px] max-w-[520px] text-base leading-[1.5] text-white/70">
-              You&apos;re on a <b className="font-semibold text-white">5-day streak</b> 🔥
-              Last time we covered crests & troughs —{' '}
-              <b className="font-semibold text-white">amplitude is next.</b> Aria&apos;s ready when
-              you are.
+              {me && me.streak_days > 0 ? (
+                <>
+                  You&apos;re on a{' '}
+                  <b className="font-semibold text-white">{me.streak_days}-day streak</b> 🔥{' '}
+                </>
+              ) : (
+                <>Welcome in. </>
+              )}
+              Aria&apos;s ready when you are — pick a course below to begin.
             </p>
             <div className="flex gap-8">
-              <Stat num="12" lbl="Topics done" />
+              <Stat
+                num={me ? String(me.stats.topics_done) : '—'}
+                lbl="Topics done"
+              />
               <Stat
                 num={
-                  <>
-                    3.5<span className="text-[0.6em]">h</span>
-                  </>
+                  me ? (
+                    <>
+                      {(me.stats.time_spent_min / 60).toFixed(1)}
+                      <span className="text-[0.6em]">h</span>
+                    </>
+                  ) : (
+                    '—'
+                  )
                 }
                 lbl="Time learned"
               />
               <Stat
                 num={
-                  <>
-                    87<span className="text-[0.6em]">%</span>
-                  </>
+                  me?.stats.quiz_avg_pct != null ? (
+                    <>
+                      {me.stats.quiz_avg_pct}
+                      <span className="text-[0.6em]">%</span>
+                    </>
+                  ) : (
+                    '—'
+                  )
                 }
                 lbl="Quiz avg"
               />
               <Stat
                 num={
                   <>
-                    <em className="mr-1 text-[0.85em] not-italic text-amber">🔥</em>5
+                    <em className="mr-1 text-[0.85em] not-italic text-amber">🔥</em>
+                    {me?.streak_days ?? 0}
                   </>
                 }
                 lbl="Day streak"
@@ -176,10 +236,10 @@ export default function DashboardPage() {
               Pick up where you left off
             </div>
             <div className="relative mb-1 font-display text-[22px] font-bold leading-[1.15] tracking-[-0.015em]">
-              Wave Properties & Anatomy
+              Oscillations: Amplitude, Period &amp; Frequency
             </div>
             <div className="relative mb-4 text-[13px] opacity-85">
-              Unit 4 · 8 of 18 min · Aria paused at &quot;amplitude&quot;
+              AP Physics 1 · Unit 7 · 18 min
             </div>
             <div className="relative mb-4 h-1 overflow-hidden rounded-[2px] bg-white/[0.18]">
               <div
@@ -222,29 +282,36 @@ export default function DashboardPage() {
 
         {/* CURRICULUM */}
         <SectHd
-          title="AP Physics 1 — Curriculum"
-          sub="College Board aligned · 2024–2025"
-          action="View full syllabus →"
+          title={`${courses.find((c) => c.slug === activeSlug)?.name ?? 'Curriculum'} — Units`}
+          sub="College Board aligned · 2024 CED"
         />
         <div className="overflow-hidden rounded-[20px] border border-border bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-border px-[22px] py-5">
             <div>
               <div className="font-display text-lg font-bold tracking-[-0.015em]">
-                AP Physics 1: Algebra-Based
+                {courses.find((c) => c.slug === activeSlug)?.name ?? 'Curriculum'}
               </div>
               <div className="mt-0.5 text-xs text-ink-3">
-                12 of 48 topics complete · est. 27 hrs remaining
+                {me ? `${me.stats.topics_done} of ${totalTopics} topics complete` : `${totalTopics} topics in this course`}
               </div>
             </div>
-            <div className="flex gap-[18px]">
-              <CurrStat v="28%" l="Complete" />
-              <CurrStat v="87%" l="Quiz avg" />
-            </div>
           </div>
-          {UNITS.map((u) => (
+          {units.length === 0 && (
+            <div className="px-[22px] py-6 text-sm text-ink-3">
+              Curriculum loading… or this course doesn&apos;t have content yet.
+            </div>
+          )}
+          {units.map((u) => (
             <CurriculumUnit
               key={u.id}
-              unit={u}
+              unit={{
+                id: u.id,
+                n: u.n,
+                name: u.name,
+                count: u.topics.length,
+                done: 0,
+                topics: u.topics.map((t) => ({ name: t.name, dur: fmtDur(t.duration_min) })),
+              }}
               open={openUnit === u.id}
               onToggle={() => setOpenUnit(openUnit === u.id ? null : u.id)}
             />
@@ -253,49 +320,47 @@ export default function DashboardPage() {
 
         {/* TODAY + STREAK */}
         <SectHd
-          title="Today, May 13"
+          title={`Today, ${prettyDate()}`}
           sub={
-            <>
-              Aria scheduled this for you ·{' '}
-              <span className="cursor-pointer text-indigo">edit plan →</span>
-            </>
+            todayBlocks.length > 0
+              ? 'Aria scheduled this for you'
+              : 'No plan scheduled for today yet — start a lesson when you’re ready.'
           }
         />
         <div className="grid grid-cols-1 gap-3.5 md:grid-cols-[1.4fr_1fr]">
           <div className="rounded-[18px] border border-border bg-white px-5 py-[18px] shadow-sm">
-            <TodayRow
-              time="9:00"
-              dot="done"
-              title="Wave Properties & Anatomy"
-              meta="Lesson · AP Physics 1 · 18 min"
-              tag="Done"
-              tagClass="bg-mint-soft text-[#1C7A47]"
-            />
-            <TodayRow
-              time="10:30"
-              title="Wave Equation Practice"
-              meta="Quiz · 10 problems · 15 min"
-              tag="Up next"
-              tagClass="bg-indigo-soft text-indigo-deep"
-            />
-            <TodayRow
-              time="2:00"
-              dot="coral"
-              title="Office hours with Aria"
-              meta="Review FRQ #2 from last week's mock exam"
-              tag="Aria"
-              tagClass="bg-coral-soft text-[#A1452B]"
-            />
-            <TodayRow
-              time="7:00"
-              dot="amber"
-              title="Flashcard review · Wave terms"
-              meta="22 cards · spaced repetition · 8 min"
-              tag="Cards"
-              tagClass="bg-amber-soft text-[#8A6800]"
-            />
+            {todayBlocks.length === 0 && (
+              <div className="px-1 py-6 text-sm text-ink-3">
+                Nothing scheduled today.
+              </div>
+            )}
+            {todayBlocks.map((b, i) => {
+              const tagFor = (status?: string): { tag: string; tagClass: string } => {
+                if (status === 'done')
+                  return { tag: 'Done', tagClass: 'bg-mint-soft text-[#1C7A47]' };
+                if (status === 'skipped')
+                  return { tag: 'Skipped', tagClass: 'bg-paper-2 text-ink-3' };
+                return { tag: 'Up next', tagClass: 'bg-indigo-soft text-indigo-deep' };
+              };
+              const { tag, tagClass } = tagFor(b.status);
+              const title = (b.payload?.title as string | undefined) ?? b.kind;
+              const meta = [b.kind, b.duration_min ? `${b.duration_min} min` : null]
+                .filter(Boolean)
+                .join(' · ');
+              return (
+                <TodayRow
+                  key={i}
+                  time={b.start_time ?? '—'}
+                  dot={b.status === 'done' ? 'done' : undefined}
+                  title={title}
+                  meta={meta}
+                  tag={tag}
+                  tagClass={tagClass}
+                />
+              );
+            })}
           </div>
-          <StreakCard days={5} />
+          <StreakCard days={me?.streak_days ?? 0} />
         </div>
       </div>
     </div>
@@ -343,11 +408,3 @@ function SectHd({
   );
 }
 
-function CurrStat({ v, l }: { v: string; l: string }) {
-  return (
-    <div className="text-right">
-      <div className="font-display text-lg font-bold text-indigo">{v}</div>
-      <div className="text-[10px] uppercase tracking-[0.08em] text-ink-3">{l}</div>
-    </div>
-  );
-}
