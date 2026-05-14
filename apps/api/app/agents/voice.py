@@ -127,17 +127,19 @@ class VoiceBridge:
         )
         await self._send_client(client_ws, {"type": "ready"})
 
-        # System prompt is currently informational — the wrapper's
-        # `get_live_client` doesn't forward it to the SDK. When that
-        # support lands we'll plumb it through; for now keep it on the
-        # log record so we can correlate sessions in observability.
+        # Build the system prompt (Aria persona + topic context) and ask
+        # the wrapper to wire it into the Live session config along with
+        # AUDIO modality — the native-audio model rejects empty configs.
         system_prompt = ARIA_VOICE_SYSTEM + (
             f" The current lesson is on {topic_name}." if topic_name else ""
         )
         log.debug("voice_system_prompt", session_id=session_id, prompt=system_prompt)
 
         try:
-            async with self.gemini.get_live_client() as gemini_session:
+            async with self.gemini.get_live_client(
+                system_instruction=system_prompt,
+                response_modalities=["AUDIO"],
+            ) as gemini_session:
                 await self._pump_until_done(
                     client_ws=client_ws,
                     gemini_session=gemini_session,

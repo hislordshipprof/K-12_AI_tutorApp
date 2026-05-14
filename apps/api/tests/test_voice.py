@@ -105,7 +105,22 @@ class _FakeGemini:
     def __init__(self, session: _FakeLiveSession) -> None:
         self.session = session
 
-    def get_live_client(self, model: str | None = None) -> Any:
+    def get_live_client(
+        self,
+        model: str | None = None,
+        system_instruction: str | None = None,
+        response_modalities: list[str] | None = None,
+        voice_name: str | None = None,
+        config: dict | None = None,
+    ) -> Any:
+        # Capture so tests can assert the bridge plumbed config through.
+        self.last_call_kwargs = {
+            "model": model,
+            "system_instruction": system_instruction,
+            "response_modalities": response_modalities,
+            "voice_name": voice_name,
+            "config": config,
+        }
         session = self.session
 
         @contextlib.asynccontextmanager

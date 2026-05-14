@@ -262,21 +262,48 @@ class GeminiService:
         raise RuntimeError("embed: retry loop exhausted without yielding")
 
     # ---- Live API (voice WebSocket bridge) -----------------------------------
-    def get_live_client(self, model: str | None = None) -> Any:
-        """Return an async context-manager for the Gemini Live API session.
+    def get_live_client(
+        self,
+        model: str | None = None,
+        system_instruction: str | None = None,
+        response_modalities: list[str] | None = None,
+        voice_name: str | None = None,
+        config: dict[str, Any] | None = None,
+    ) -> Any:
+        """Return an async context-manager for a Gemini Live API session.
 
         Usage (inside `app/ws/voice.py`):
 
-            async with gemini.get_live_client() as session:
-                await session.send(...)
+            async with gemini.get_live_client(
+                system_instruction="You are Aria…",
+                response_modalities=["AUDIO"],
+            ) as session:
+                await session.send_realtime_input(audio=...)
                 async for response in session.receive():
                     ...
+
+        `response_modalities` defaults to `["AUDIO"]` for the native-audio model
+        (the API rejects empty config with "Cannot extract voices from a non-audio
+        request"). Override to `["TEXT"]` for transcript-only sessions.
+
+        Any extra fields in `config` are merged on top of the assembled config.
         """
         model_name = model or settings.gemini_model_live
-        # `client.aio.live.connect(...)` returns an async-context-manager
-        # whose body is the active session. We return it un-entered so the
-        # caller controls the lifetime.
-        return self.client.aio.live.connect(model=model_name)
+
+        cfg: dict[str, Any] = {
+            "response_modalities": response_modalities or ["AUDIO"],
+        }
+        if system_instruction:
+            cfg["system_instruction"] = system_instruction
+        if voice_name:
+            # speech_config shape per the new SDK
+            cfg["speech_config"] = {
+                "voice_config": {"prebuilt_voice_config": {"voice_name": voice_name}},
+            }
+        if config:
+            cfg.update(config)
+
+        return self.client.aio.live.connect(model=model_name, config=cfg)
 
 
 # ── Module singleton ─────────────────────────────────────────────────────────
