@@ -1,6 +1,8 @@
 import { TimedReveal } from '@/components/aria/timed-reveal';
 import { cn } from '@/lib/utils';
 
+import { getScene } from './scenes';
+
 interface WhiteboardSVGProps {
   /** 0-7. 0 is the "preparing" placeholder. */
   step?: number;
@@ -30,6 +32,12 @@ interface WhiteboardSVGProps {
    * "writes itself" word-by-word in sync with Aria's voice (Phase A).
    */
   revealProgress?: number;
+  /**
+   * Optional animated diagram for the current step (Phase B). When the
+   * `type` resolves in the scene registry it replaces the text
+   * chalkboard — the scene draws itself in sync with `revealProgress`.
+   */
+  scene?: { type: string; params: Record<string, unknown> } | null;
 }
 
 const WAVE_D =
@@ -72,7 +80,10 @@ export function WhiteboardSVG({
   stepTts,
   topicTitle,
   revealProgress = 1,
+  scene = null,
 }: WhiteboardSVGProps) {
+  // A step-level scene wins over the text chalkboard / waves scene.
+  const SceneComponent = scene ? getScene(scene.type) : null;
   return (
     <svg
       viewBox="0 0 900 530"
@@ -106,7 +117,38 @@ export function WhiteboardSVG({
         </filter>
       </defs>
 
-      {kind === 'generic' ? (
+      {SceneComponent && scene ? (
+        <g>
+          {/* Topic watermark + step counter stay so the board feels
+              consistent across text-chalkboard and scene steps. */}
+          {topicTitle ? (
+            <text
+              x="60"
+              y="56"
+              fill="rgba(255,255,255,.22)"
+              fontSize="14"
+              fontFamily="Bricolage Grotesque, serif"
+              fontStyle="italic"
+              filter="url(#chalk)"
+            >
+              {topicTitle}
+            </text>
+          ) : null}
+          <text
+            x="840"
+            y="56"
+            textAnchor="end"
+            fill="rgba(255,255,255,.28)"
+            fontSize="13"
+            fontWeight="700"
+            fontFamily="DM Sans, sans-serif"
+            filter="url(#chalk)"
+          >
+            {step === 0 ? 'Preparing…' : `Step ${step}`}
+          </text>
+          <SceneComponent progress={revealProgress} params={scene.params} />
+        </g>
+      ) : kind === 'generic' ? (
         <GenericChalkboard
           step={step}
           stepHtml={stepHtml}

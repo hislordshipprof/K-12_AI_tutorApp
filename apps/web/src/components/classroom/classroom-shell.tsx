@@ -55,6 +55,12 @@ interface LessonStep {
   tts: string;
   /** Mock duration label shown in the outline. */
   dur: string;
+  /**
+   * Optional animated diagram for this step (Phase B). When present the
+   * whiteboard renders the matching scene component instead of the
+   * generic text chalkboard. `type` is a key in the scene registry.
+   */
+  scene?: { type: string; params: Record<string, unknown> } | null;
 }
 
 const LESSON_STEPS: LessonStep[] = [
@@ -145,7 +151,12 @@ export interface ClassroomTopic {
    * fallback below renders so the prototype + Playwright fixtures still
    * work.
    */
-  content?: Array<{ tts: string; html: string; dur: string }> | null;
+  content?: Array<{
+    tts: string;
+    html: string;
+    dur: string;
+    scene?: { type: string; params: Record<string, unknown> } | null;
+  }> | null;
 }
 
 interface ClassroomShellProps {
@@ -174,6 +185,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
         html: s.html,
         tts: s.tts,
         dur: s.dur,
+        scene: s.scene ?? null,
       }));
     }
     return LESSON_STEPS;
@@ -481,6 +493,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
             stepTts={lessonSteps[step]?.tts}
             topicTitle={topic.title}
             revealProgress={captionProgress}
+            scene={lessonSteps[step]?.scene ?? null}
           />
         </div>
 
