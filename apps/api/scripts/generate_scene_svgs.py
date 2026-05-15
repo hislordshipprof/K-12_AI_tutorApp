@@ -236,7 +236,15 @@ def _validate(drawing: SceneDrawing) -> dict | None:
 # ── Model call ───────────────────────────────────────────────────────────────
 
 
-async def _draw_step(gemini: Any, model: str, topic: str, step_text: str) -> dict | None:
+_RETRYABLE = ("rate limit", "429", "500", "502", "503", "504",
+              "overloaded", "deadline exceeded", "unavailable", "internal error")
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    return any(p in str(exc).lower() for p in _RETRYABLE)
+
+
+def _retrying() -> Any:
     from tenacity import (
         AsyncRetrying,
         retry_if_exception,
@@ -244,12 +252,48 @@ async def _draw_step(gemini: Any, model: str, topic: str, step_text: str) -> dic
         wait_exponential,
     )
 
-    retryable = ("rate limit", "429", "500", "502", "503", "504",
-                 "deadline exceeded", "unavailable", "internal error")
+    return AsyncRetrying(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        retry=retry_if_exception(_is_retryable),
+        reraise=True,
+    )
 
-    def is_retryable(exc: BaseException) -> bool:
-        return any(p in str(exc).lower() for p in retryable)
 
+async def _draw_step_anthropic(
+    client: Any, model: str, topic: str, step_text: str
+) -> dict | None:
+    """Draw one step via the Anthropic Messages API.
+
+    Structured output is forced through a single tool whose input_schema is
+    the ``SceneDrawing`` JSON schema — Claude must answer by 'calling' it,
+    so the tool input lands as the typed drawing.
+    """
+    tool = {
+        "name": "draw_scene",
+        "description": "Return the chalkboard diagram as structured primitives.",
+        "input_schema": SceneDrawing.model_json_schema(),
+    }
+    async for attempt in _retrying():
+        with attempt:
+            resp = await client.messages.create(
+                model=model,
+                max_tokens=8192,
+                system=_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": _user_prompt(topic, step_text)}],
+                tools=[tool],
+                tool_choice={"type": "tool", "name": "draw_scene"},
+            )
+            for block in resp.content:
+                if getattr(block, "type", None) == "tool_use":
+                    return _validate(SceneDrawing.model_validate(block.input))
+            raise RuntimeError("generate_scene_svgs: no tool_use block in response")
+    return None
+
+
+async def _draw_step_gemini(
+    gemini: Any, model: str, topic: str, step_text: str
+) -> dict | None:
     config: dict[str, Any] = {
         "system_instruction": _SYSTEM_PROMPT,
         "response_mime_type": "application/json",
@@ -257,12 +301,7 @@ async def _draw_step(gemini: Any, model: str, topic: str, step_text: str) -> dic
         "temperature": 0.7,
     }
     client = gemini.client
-    async for attempt in AsyncRetrying(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=8),
-        retry=retry_if_exception(is_retryable),
-        reraise=True,
-    ):
+    async for attempt in _retrying():
         with attempt:
             resp = await client.aio.models.generate_content(
                 model=model,
@@ -293,7 +332,9 @@ async def _run(args: argparse.Namespace) -> int:
 
         env = API_ROOT / ".env"
         if env.exists():
-            load_dotenv(env)
+            # override=True: .env is the source of truth for this script —
+            # the shell may export an empty/stale key that would otherwise win.
+            load_dotenv(env, override=True)
     except ImportError:
         pass
 
@@ -315,8 +356,25 @@ async def _run(args: argparse.Namespace) -> int:
     topics = query.execute()
     rows = getattr(topics, "data", None) or []
 
-    gemini = GeminiService()
-    model = settings.gemini_model_pro
+    # Provider switch — Phase C drawing is an isolated batch task, so it can
+    # use a different model from the live (Gemini) app without any ripple.
+    if args.provider == "anthropic":
+        import os
+
+        from anthropic import AsyncAnthropic
+
+        key = os.getenv("ANTHROPIC_API_KEY")
+        if not key:
+            print("[scene-svg] ANTHROPIC_API_KEY not set", file=sys.stderr)
+            return 3
+        draw_client: Any = AsyncAnthropic(api_key=key)
+        model = args.model or "claude-sonnet-4-6"
+        draw_fn = _draw_step_anthropic
+    else:
+        draw_client = GeminiService()
+        model = args.model or settings.gemini_model_pro
+        draw_fn = _draw_step_gemini
+    print(f"[scene-svg] provider={args.provider} model={model}", file=sys.stderr)
 
     processed = 0
     drawn = 0
@@ -353,7 +411,7 @@ async def _run(args: argparse.Namespace) -> int:
             try:
                 # Hard ceiling so one stuck model call can't hang the run.
                 params = await asyncio.wait_for(
-                    _draw_step(gemini, model, topic_name, step_text),
+                    draw_fn(draw_client, model, topic_name, step_text),
                     timeout=90,
                 )
             except (asyncio.TimeoutError, TimeoutError):
@@ -416,6 +474,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="restrict to one topic id")
     parser.add_argument("--force", action="store_true",
                         help="also redraw existing custom-svg steps")
+    parser.add_argument("--provider", choices=["gemini", "anthropic"],
+                        default="gemini", help="model provider")
+    parser.add_argument("--model", type=str, default=None,
+                        help="model id. Default: gemini_model_pro for gemini, "
+                             "claude-sonnet-4-6 for anthropic.")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     return asyncio.run(_run(args))
 
