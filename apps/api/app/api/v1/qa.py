@@ -15,6 +15,7 @@ Behaviour change vs. the earlier stub:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 from typing import Annotated, Any, Literal
@@ -76,6 +77,7 @@ async def ask_question(
             user_id=user_id,
             source=body.source,
         )
+        token_count = 0
         try:
             async for token in tutor.handle_question(
                 session_id=session_id,
@@ -84,8 +86,29 @@ async def ask_question(
                 source=body.source,
                 topic_id=body.topic_id,
             ):
+                # Cost-leak guard: stop pulling Gemini tokens the moment the
+                # SSE client disconnects. Breaking out of the loop calls the
+                # async generator chain's __aexit__, which closes the
+                # underlying HTTP/2 stream to Gemini.
+                if await request.is_disconnected():
+                    log.info(
+                        "qa_client_disconnected",
+                        session_id=str(session_id),
+                        tokens_yielded=token_count,
+                    )
+                    return
                 yield _sse({"type": "token", "content": token}).encode("utf-8")
+                token_count += 1
             yield _sse({"type": "done"}).encode("utf-8")
+        except asyncio.CancelledError:
+            # Starlette tears the response down (e.g. client navigated away
+            # mid-stream). Don't emit an error frame — the client is gone.
+            log.info(
+                "qa_cancelled",
+                session_id=str(session_id),
+                tokens_yielded=token_count,
+            )
+            raise
         except Exception as e:  # noqa: BLE001 — surface failure to the SSE client
             log.exception("qa_stream_failed", session_id=str(session_id))
             yield _sse({"type": "error", "message": str(e)}).encode("utf-8")

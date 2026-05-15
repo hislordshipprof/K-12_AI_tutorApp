@@ -50,9 +50,17 @@ class _FakeLiveSession:
         *,
         audio: Any = None,
         audio_stream_end: bool | None = None,
+        activity_start: Any = None,
+        activity_end: Any = None,
     ) -> None:
         self.sent.append(
-            {"op": "send_realtime_input", "audio": audio, "audio_stream_end": audio_stream_end}
+            {
+                "op": "send_realtime_input",
+                "audio": audio,
+                "audio_stream_end": audio_stream_end,
+                "activity_start": activity_start,
+                "activity_end": activity_end,
+            }
         )
 
     async def send_client_content(
@@ -86,16 +94,23 @@ def _make_server_msg(
     data: bytes | None = None,
     text: str | None = None,
     turn_complete: bool = False,
+    interrupted: bool = False,
+    generation_complete: bool = False,
 ) -> SimpleNamespace:
     """Shape-compatible stand-in for `LiveServerMessage`.
 
     The bridge reads ``response.data`` / ``response.text`` (which on the
-    real SDK are computed properties) and ``response.server_content.turn_complete``.
+    real SDK are computed properties) and ``response.server_content.*``
+    for ``turn_complete``, ``interrupted``, and ``generation_complete``.
     """
     return SimpleNamespace(
         data=data,
         text=text,
-        server_content=SimpleNamespace(turn_complete=turn_complete),
+        server_content=SimpleNamespace(
+            turn_complete=turn_complete,
+            interrupted=interrupted,
+            generation_complete=generation_complete,
+        ),
     )
 
 
@@ -341,3 +356,115 @@ def test_bridge_is_constructible_with_gemini_stub(fake_session: _FakeLiveSession
     bridge = VoiceBridge(_FakeGemini(fake_session))
     # Attribute access only — we don't run it here.
     assert callable(bridge.gemini.get_live_client)
+
+
+# ── interruption envelope tests (A1 — see docs/interruption-architecture.md) ─
+def _drain_ws(ws: Any) -> list[dict[str, Any]]:
+    """Read every frame until the server closes the socket."""
+    msgs: list[dict[str, Any]] = []
+    while True:
+        try:
+            msgs.append(json.loads(ws.receive_text()))
+        except WebSocketDisconnect:
+            return msgs
+
+
+def test_server_interrupted_forwarded_to_client(
+    app_client: TestClient,
+    install_fake_gemini: _FakeLiveSession,
+) -> None:
+    """When Gemini emits server_content.interrupted=True, the bridge MUST
+    forward a {"type":"interrupted"} frame so the browser worklet can flush
+    its playback queue. This is the linchpin of voice barge-in.
+    """
+    session = install_fake_gemini
+    session.push(_make_server_msg(data=b"\x01\x02"))
+    session.push(_make_server_msg(interrupted=True))
+    session.end_stream()
+
+    with app_client.websocket_connect(
+        "/ws/voice/11111111-2222-3333-4444-555555555555"
+    ) as ws:
+        msgs = _drain_ws(ws)
+    types = [m["type"] for m in msgs]
+    assert "interrupted" in types, f"never received interrupted; saw {types}"
+
+
+def test_server_generation_complete_forwarded(
+    app_client: TestClient,
+    install_fake_gemini: _FakeLiveSession,
+) -> None:
+    """generation_complete is distinct from turn_complete — the bridge emits both."""
+    session = install_fake_gemini
+    session.push(_make_server_msg(generation_complete=True))
+    session.push(_make_server_msg(turn_complete=True))
+    session.end_stream()
+
+    with app_client.websocket_connect(
+        "/ws/voice/11111111-2222-3333-4444-555555555555"
+    ) as ws:
+        msgs = _drain_ws(ws)
+    types = [m["type"] for m in msgs]
+    assert "generation_complete" in types, f"missing generation_complete; saw {types}"
+    assert "turn_complete" in types, f"missing turn_complete; saw {types}"
+
+
+def test_client_interrupt_triggers_activity_start(
+    app_client: TestClient,
+    install_fake_gemini: _FakeLiveSession,
+) -> None:
+    """A {'type':'interrupt'} from the client should cause the bridge to
+    call send_realtime_input(activity_start={}) on the Live session — that's
+    how we force the model to yield without the user actually speaking.
+    """
+    session = install_fake_gemini
+    with app_client.websocket_connect(
+        "/ws/voice/11111111-2222-3333-4444-555555555555"
+    ) as ws:
+        assert json.loads(ws.receive_text()) == {"type": "ready"}
+        ws.send_text(json.dumps({"type": "interrupt"}))
+        for _ in range(20):
+            if any(
+                s["op"] == "send_realtime_input" and s.get("activity_start") is not None
+                for s in session.sent
+            ):
+                break
+            ws.send_text(json.dumps({"type": "end_turn"}))
+    starts = [
+        s
+        for s in session.sent
+        if s["op"] == "send_realtime_input" and s.get("activity_start") is not None
+    ]
+    assert starts, f"interrupt never reached the Live session; sent={session.sent}"
+
+
+def test_client_activity_start_end_forwarded(
+    app_client: TestClient,
+    install_fake_gemini: _FakeLiveSession,
+) -> None:
+    """Manual-VAD push-to-talk: activity_start and activity_end frames from
+    the client should each call send_realtime_input with the matching arg.
+    """
+    session = install_fake_gemini
+    with app_client.websocket_connect(
+        "/ws/voice/11111111-2222-3333-4444-555555555555"
+    ) as ws:
+        assert json.loads(ws.receive_text()) == {"type": "ready"}
+        ws.send_text(json.dumps({"type": "activity_start"}))
+        ws.send_text(json.dumps({"type": "activity_end"}))
+        for _ in range(20):
+            starts = [
+                s
+                for s in session.sent
+                if s["op"] == "send_realtime_input" and s.get("activity_start") is not None
+            ]
+            ends = [
+                s
+                for s in session.sent
+                if s["op"] == "send_realtime_input" and s.get("activity_end") is not None
+            ]
+            if starts and ends:
+                break
+            ws.send_text(json.dumps({"type": "end_turn"}))
+    assert starts, f"activity_start never reached the Live session; sent={session.sent}"
+    assert ends, f"activity_end never reached the Live session; sent={session.sent}"

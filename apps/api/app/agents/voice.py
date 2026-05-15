@@ -8,16 +8,21 @@ Protocol envelope (client <-> server, both directions are JSON-encoded
 text frames — base64 for binary blobs):
 
     client -> server
-        {"type": "audio",    "audio": "<base64 PCM 16kHz mono>"}
-        {"type": "text",     "text":  "..."}             # optional user text
-        {"type": "end_turn"}                              # finalize this turn
+        {"type": "audio",          "audio": "<base64 PCM 16kHz mono>"}
+        {"type": "text",           "text":  "..."}        # optional user text
+        {"type": "end_turn"}                                # finalize this turn
+        {"type": "activity_start"}                          # manual-VAD only
+        {"type": "activity_end"}                            # manual-VAD only
+        {"type": "interrupt"}                               # barge in without speech
 
     server -> client
-        {"type": "ready"}                                # accepted, bridge up
-        {"type": "audio",     "audio": "<base64 PCM>"}   # TTS audio chunk
-        {"type": "transcript","text":  "..."}            # model text fragment
-        {"type": "turn_complete"}
-        {"type": "error",     "message": "..."}
+        {"type": "ready"}                                   # accepted, bridge up
+        {"type": "audio",          "audio": "<base64 PCM>"} # TTS audio chunk
+        {"type": "transcript",     "text":  "..."}          # model text fragment
+        {"type": "interrupted"}                             # **flush playback NOW**
+        {"type": "generation_complete"}                     # model stopped generating
+        {"type": "turn_complete"}                           # model finished speaking
+        {"type": "error",          "message": "..."}
         {"type": "done"}
 
 The bridge runs two cooperative tasks — `_client_to_gemini` (browser ->
@@ -81,7 +86,7 @@ async def _send_text(session: Any, text: str, *, turn_complete: bool = True) -> 
 
 
 async def _signal_end_of_turn(session: Any) -> None:
-    """Tell the Live API the user has finished speaking."""
+    """Tell the Live API the user has finished speaking (auto-VAD mode)."""
     if hasattr(session, "send_realtime_input"):
         # The current SDK takes an explicit activity_end signal OR an
         # `audio_stream_end=True`. Either is acceptable.
@@ -95,6 +100,45 @@ async def _signal_end_of_turn(session: Any) -> None:
         await session.send_client_content(turns=None, turn_complete=True)
         return
     await session.send(input=None, end_of_turn=True)  # type: ignore[call-arg]
+
+
+async def _send_activity_start(session: Any) -> None:
+    """Manual-VAD: signal the model that the user just started speaking.
+
+    Only used when the client has disabled automatic VAD (push-to-talk).
+    In auto-VAD mode the server detects speech itself and this is unused.
+    """
+    if hasattr(session, "send_realtime_input"):
+        try:
+            await session.send_realtime_input(activity_start={})
+            return
+        except TypeError:
+            pass
+
+
+async def _send_activity_end(session: Any) -> None:
+    """Manual-VAD: signal the model that the user just stopped speaking."""
+    if hasattr(session, "send_realtime_input"):
+        try:
+            await session.send_realtime_input(activity_end={})
+            return
+        except TypeError:
+            pass
+
+
+async def _force_interrupt(session: Any) -> None:
+    """Client-initiated barge-in: force the model to yield without speech.
+
+    Used when the user taps a "stop talking" button. We send an empty
+    activity_start which the model treats as "user is taking the floor",
+    which in turn triggers the `interrupted` signal on the response stream.
+    """
+    if hasattr(session, "send_realtime_input"):
+        try:
+            await session.send_realtime_input(activity_start={})
+            return
+        except TypeError:
+            pass
 
 
 # ── bridge ───────────────────────────────────────────────────────────────────
@@ -208,6 +252,22 @@ class VoiceBridge:
                         )
                     elif t == "end_turn":
                         await _signal_end_of_turn(gemini_session)
+                    elif t == "activity_start":
+                        # Push-to-talk: student just pressed the mic button.
+                        await _send_activity_start(gemini_session)
+                    elif t == "activity_end":
+                        # Push-to-talk: student just released the mic button.
+                        await _send_activity_end(gemini_session)
+                    elif t == "interrupt":
+                        # Student tapped "stop talking" — barge in without
+                        # actually speaking. The model will respond with a
+                        # `server_content.interrupted=True` frame which we
+                        # forward to the client to flush playback.
+                        log.info(
+                            "voice_client_initiated_interrupt",
+                            session_id=session_id,
+                        )
+                        await _force_interrupt(gemini_session)
                     else:
                         log.debug(
                             "voice_unknown_client_msg",
@@ -241,13 +301,33 @@ class VoiceBridge:
                             client_ws, {"type": "transcript", "text": text}
                         )
                     server_content = getattr(response, "server_content", None)
-                    if (
-                        server_content is not None
-                        and getattr(server_content, "turn_complete", False)
-                    ):
-                        await self._send_client(
-                            client_ws, {"type": "turn_complete"}
-                        )
+                    if server_content is not None:
+                        # Gemini Live signals barge-in with `interrupted=True`
+                        # on the same payload that delivered the
+                        # already-emitted text/audio. The client MUST flush
+                        # its playback queue the moment it sees this — see
+                        # docs/interruption-architecture.md § Voice.
+                        if getattr(server_content, "interrupted", False):
+                            log.info(
+                                "voice_interrupted",
+                                session_id=session_id,
+                            )
+                            await self._send_client(
+                                client_ws, {"type": "interrupted"}
+                            )
+                        # `generation_complete` (model finished generating)
+                        # is distinct from `turn_complete` (the model has
+                        # also finished speaking the last queued chunk).
+                        # Emitting both lets the UI dim "Aria speaking…"
+                        # before the student actually replies.
+                        if getattr(server_content, "generation_complete", False):
+                            await self._send_client(
+                                client_ws, {"type": "generation_complete"}
+                            )
+                        if getattr(server_content, "turn_complete", False):
+                            await self._send_client(
+                                client_ws, {"type": "turn_complete"}
+                            )
             except WebSocketDisconnect:
                 # Client window closed mid-receive.
                 log.info(

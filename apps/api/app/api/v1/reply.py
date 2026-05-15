@@ -12,6 +12,7 @@ single token-streaming handler.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 from typing import Annotated, Any
@@ -62,6 +63,7 @@ async def submit_reply(
 
     async def event_stream() -> AsyncGenerator[bytes, None]:
         log.info("reply_start", session_id=str(session_id), user_id=user_id)
+        token_count = 0
         try:
             async for token in tutor.handle_reply(
                 session_id=session_id,
@@ -69,8 +71,23 @@ async def submit_reply(
                 text=body.text,
                 topic_id=body.topic_id,
             ):
+                if await request.is_disconnected():
+                    log.info(
+                        "reply_client_disconnected",
+                        session_id=str(session_id),
+                        tokens_yielded=token_count,
+                    )
+                    return
                 yield _sse({"type": "token", "content": token}).encode("utf-8")
+                token_count += 1
             yield _sse({"type": "done"}).encode("utf-8")
+        except asyncio.CancelledError:
+            log.info(
+                "reply_cancelled",
+                session_id=str(session_id),
+                tokens_yielded=token_count,
+            )
+            raise
         except Exception as e:  # noqa: BLE001
             log.exception("reply_stream_failed", session_id=str(session_id))
             yield _sse({"type": "error", "message": str(e)}).encode("utf-8")
