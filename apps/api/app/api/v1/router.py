@@ -22,6 +22,7 @@ from app.api.v1 import (
     reply,
     sessions,
     sketch,
+    tts,
 )
 
 v1 = APIRouter(prefix="/v1")
@@ -35,6 +36,7 @@ v1.include_router(reply.router)
 v1.include_router(reaction.router)
 v1.include_router(sketch.router)
 v1.include_router(quiz.router)
+v1.include_router(tts.router)
 v1.include_router(notes.router)
 v1.include_router(planner.router)
 v1.include_router(flashcards.router)

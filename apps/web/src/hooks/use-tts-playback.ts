@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { apiBase } from '@/lib/api';
+
 /**
  * `useTtsPlayback` — drop-in replacement for `useSpeak` that exposes the
  * playback CONTROL surface the interruption architecture needs
@@ -146,10 +148,37 @@ export function useTtsPlayback({
 
   // Per-utterance state.
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
+  // HTMLAudioElement-backed playback (Gemini Live WAV).
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+  // Tracks the in-flight TTS fetch so a flush() can abort it before audio loads.
+  const ttsAbortRef = useRef<AbortController | null>(null);
   const startedAtRef = useRef<number>(0);
   const accumulatedMsRef = useRef<number>(0);
   const pausedRef = useRef<boolean>(false);
   const progressTimerRef = useRef<number | null>(null);
+
+  const releaseAudio = useCallback(() => {
+    const a = audioRef.current;
+    if (a) {
+      try {
+        a.pause();
+        a.removeAttribute('src');
+        a.load();
+      } catch {
+        // ignored
+      }
+    }
+    audioRef.current = null;
+    if (audioUrlRef.current) {
+      try {
+        URL.revokeObjectURL(audioUrlRef.current);
+      } catch {
+        // ignored
+      }
+      audioUrlRef.current = null;
+    }
+  }, []);
 
   const elapsedMs = useCallback((): number => {
     if (pausedRef.current) return accumulatedMsRef.current;
@@ -177,6 +206,17 @@ export function useTtsPlayback({
   );
 
   const flush = useCallback(() => {
+    // Abort any in-flight /v1/tts fetch so we don't start playing an audio
+    // clip after the user has barged in.
+    if (ttsAbortRef.current) {
+      try {
+        ttsAbortRef.current.abort();
+      } catch {
+        // ignored
+      }
+      ttsAbortRef.current = null;
+    }
+    releaseAudio();
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       try {
         window.speechSynthesis.cancel();
@@ -190,36 +230,35 @@ export function useTtsPlayback({
     pausedRef.current = false;
     stopProgressTimer();
     setSpeaking(false);
-    // TODO(backend-tts): when the AudioWorklet path is active, also
-    //   worklet.port.postMessage({ cmd: 'flush' })
-  }, [stopProgressTimer]);
+  }, [releaseAudio, stopProgressTimer]);
 
-  const start = useCallback(
-    ({ text, startMs = 0, onProgress: localOnProgress }: StartArgs) => {
-      if (mutedRef.current) return;
+  /**
+   * Fallback path — use the browser's speechSynthesis API. Used when the
+   * Gemini Live fetch fails, returns a non-2xx, or is explicitly disabled.
+   */
+  const startWithWebSpeech = useCallback(
+    (
+      text: string,
+      startMs: number,
+      localOnProgress?: (ms: number) => void,
+    ) => {
       if (typeof window === 'undefined' || !window.speechSynthesis) return;
       try {
         window.speechSynthesis.cancel();
 
         // Approximate seek by trimming the leading portion of the text.
-        // Word-accurate seek isn't possible with the platform API; this
-        // gets us "resume near where you were" which is good enough for
-        // a step-level bookmark.
         let effectiveText = text;
         if (startMs > 0) {
           const charsToSkip = Math.min(
             text.length,
             Math.floor(startMs * CHARS_PER_MS * rateRef.current),
           );
-          // Snap to the nearest following space so we don't start mid-word.
           let skip = charsToSkip;
           while (skip < text.length && text[skip] !== ' ') skip++;
           effectiveText = text.slice(skip).trimStart() || text;
         }
 
         const u = new SpeechSynthesisUtterance(effectiveText);
-        // Slightly slower + neutral pitch is more "teacherly" than the
-        // platform default of rate=1, pitch=1.04 which sounded chipper.
         u.rate = Math.max(0.85, rateRef.current * 0.92);
         u.pitch = 1.0;
         u.volume = 1;
@@ -255,43 +294,194 @@ export function useTtsPlayback({
     [elapsedMs, startProgressTimer, stopProgressTimer],
   );
 
+  /**
+   * Primary path — fetch a natural-voice WAV from /v1/tts and play it via
+   * an HTMLAudioElement. Falls back to speechSynthesis on any failure so
+   * a TTS outage doesn't silence the lesson.
+   */
+  const start = useCallback(
+    ({ text, startMs = 0, onProgress: localOnProgress }: StartArgs) => {
+      if (mutedRef.current) return;
+      if (!text.trim()) return;
+
+      // Clean slate before kicking a new utterance.
+      if (ttsAbortRef.current) {
+        try {
+          ttsAbortRef.current.abort();
+        } catch {
+          // ignored
+        }
+      }
+      releaseAudio();
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {
+          // ignored
+        }
+      }
+      stopProgressTimer();
+
+      accumulatedMsRef.current = startMs;
+      pausedRef.current = false;
+
+      const controller = new AbortController();
+      ttsAbortRef.current = controller;
+
+      // Kick off the fetch — show the "speaking" state optimistically so
+      // the UI doesn't flash idle during the ~500ms-2s synth latency.
+      setSpeaking(true);
+
+      (async () => {
+        try {
+          const res = await fetch(`${apiBase}/v1/tts`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'audio/wav',
+              ...(process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
+                ? { 'X-Dev-User-Id': '00000000-0000-0000-0000-000000000001' }
+                : {}),
+            },
+            body: JSON.stringify({ text }),
+            signal: controller.signal,
+          });
+          if (!res.ok) throw new Error(`tts ${res.status}`);
+          const blob = await res.blob();
+          if (controller.signal.aborted) return;
+          const url = URL.createObjectURL(blob);
+          audioUrlRef.current = url;
+          const audio = new Audio(url);
+          audio.preload = 'auto';
+          audio.playbackRate = Math.max(0.85, rateRef.current * 0.95);
+          audioRef.current = audio;
+
+          audio.onloadedmetadata = () => {
+            if (startMs > 0 && Number.isFinite(audio.duration)) {
+              audio.currentTime = Math.min(audio.duration - 0.05, startMs / 1000);
+            }
+          };
+          audio.onplay = () => {
+            startedAtRef.current = Date.now();
+            setSpeaking(true);
+            startProgressTimer(localOnProgress);
+          };
+          audio.onpause = () => {
+            accumulatedMsRef.current = elapsedMs();
+            startedAtRef.current = 0;
+            // Keep speaking=true while paused so the UI shows the bar; flush()
+            // sets it to false explicitly.
+          };
+          audio.onended = () => {
+            accumulatedMsRef.current = elapsedMs();
+            startedAtRef.current = 0;
+            setSpeaking(false);
+            stopProgressTimer();
+            releaseAudio();
+          };
+          audio.onerror = () => {
+            startedAtRef.current = 0;
+            setSpeaking(false);
+            stopProgressTimer();
+            releaseAudio();
+            // Last-ditch — try the platform voice so the student hears
+            // *something* instead of silence.
+            startWithWebSpeech(text, startMs, localOnProgress);
+          };
+
+          await audio.play().catch(() => {
+            // Autoplay blocked — fall back to platform voice. Browsers
+            // typically allow audio after the user has interacted with
+            // the page (which a classroom click implies).
+            releaseAudio();
+            startWithWebSpeech(text, startMs, localOnProgress);
+          });
+        } catch (err) {
+          if (controller.signal.aborted) return;
+          // Network blip / 502 / no API key — fall back to platform voice.
+          void err;
+          startWithWebSpeech(text, startMs, localOnProgress);
+        } finally {
+          if (ttsAbortRef.current === controller) {
+            ttsAbortRef.current = null;
+          }
+        }
+      })();
+    },
+    [
+      elapsedMs,
+      releaseAudio,
+      startProgressTimer,
+      startWithWebSpeech,
+      stopProgressTimer,
+    ],
+  );
+
   const pause = useCallback(() => {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
     if (pausedRef.current) return;
-    try {
-      window.speechSynthesis.pause();
-    } catch {
-      // ignored
+    // Prefer the audio-element path; if it's not active, fall back to
+    // speechSynthesis so legacy plays still pause cleanly.
+    const audio = audioRef.current;
+    if (audio && !audio.paused) {
+      try {
+        audio.pause();
+      } catch {
+        // ignored
+      }
+    } else if (typeof window !== 'undefined' && window.speechSynthesis) {
+      try {
+        window.speechSynthesis.pause();
+      } catch {
+        // ignored
+      }
     }
     accumulatedMsRef.current = elapsedMs();
     startedAtRef.current = 0;
     pausedRef.current = true;
-    // Keep `speaking` true conceptually — the utterance is queued, just paused.
-    // TODO(backend-tts): worklet.port.postMessage({ cmd: 'pause' })
   }, [elapsedMs]);
 
   const resume = useCallback(() => {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
     if (!pausedRef.current) return;
-    try {
-      window.speechSynthesis.resume();
-    } catch {
-      // ignored
+    const audio = audioRef.current;
+    if (audio) {
+      audio.play().catch(() => {
+        // Autoplay block — keep the paused state truthful.
+      });
+    } else if (typeof window !== 'undefined' && window.speechSynthesis) {
+      try {
+        window.speechSynthesis.resume();
+      } catch {
+        // ignored
+      }
     }
     startedAtRef.current = Date.now();
     pausedRef.current = false;
-    // TODO(backend-tts): worklet.port.postMessage({ cmd: 'resume' })
   }, []);
 
-  const seek = useCallback((_ms: number) => {
-    // Under speechSynthesis, seek isn't a direct operation — the consumer
-    // should call `flush()` then `start({ text, startMs })`. Exposed here
-    // so the API surface matches the worklet protocol that will eventually
-    // back it. TODO(backend-tts): worklet.port.postMessage({ cmd:'seek', offsetMs:_ms })
-    void _ms;
+  const seek = useCallback((ms: number) => {
+    const audio = audioRef.current;
+    if (audio && Number.isFinite(audio.duration)) {
+      try {
+        audio.currentTime = Math.max(0, Math.min(audio.duration - 0.05, ms / 1000));
+        accumulatedMsRef.current = ms;
+      } catch {
+        // ignored
+      }
+      return;
+    }
+    // speechSynthesis has no native seek — consumer should flush + restart.
+    void ms;
   }, []);
 
-  const getCurrentMs = useCallback(() => elapsedMs(), [elapsedMs]);
+  const getCurrentMs = useCallback(() => {
+    // When the audio-element path is active prefer its own clock — it's
+    // sample-accurate and survives pause/resume cycles correctly.
+    const audio = audioRef.current;
+    if (audio && Number.isFinite(audio.currentTime)) {
+      return Math.round(audio.currentTime * 1000);
+    }
+    return elapsedMs();
+  }, [elapsedMs]);
 
   // Back-compat shims.
   const speak = useCallback((text: string) => start({ text }), [start]);
@@ -300,6 +490,15 @@ export function useTtsPlayback({
   // Cleanup on unmount.
   useEffect(() => {
     return () => {
+      if (ttsAbortRef.current) {
+        try {
+          ttsAbortRef.current.abort();
+        } catch {
+          // ignored
+        }
+        ttsAbortRef.current = null;
+      }
+      releaseAudio();
       if (typeof window !== 'undefined' && window.speechSynthesis) {
         try {
           window.speechSynthesis.cancel();
@@ -312,6 +511,7 @@ export function useTtsPlayback({
         progressTimerRef.current = null;
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Prime the speech-synthesis voice list on mount. Chrome populates
