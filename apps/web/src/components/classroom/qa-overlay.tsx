@@ -27,11 +27,12 @@ interface SSEPayload {
   scene?: QAScene;
 }
 
+// Subject-agnostic prompts — they make sense on any lesson, physics or not.
 const CHIPS = [
-  "What's amplitude again?",
-  'How is wavelength different from period?',
-  'Can you show me v = f · λ on the board?',
-  'What units is frequency in?',
+  'Can you explain that part again?',
+  'Why does this matter?',
+  'Can you give me an example?',
+  "What's the key idea here?",
 ];
 
 /**

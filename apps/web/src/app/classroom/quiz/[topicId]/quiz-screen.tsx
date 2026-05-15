@@ -57,14 +57,19 @@ export function QuizScreen({ topicId }: QuizScreenProps) {
   const [showFb, setShowFb] = useState(false);
   const [reveal, setReveal] = useState<AttemptResult | null>(null);
 
-  // Try to fetch a real question when we have a session id.
+  // A session id gives the most precise route; without one we fetch a real
+  // question for the topic itself. Only a genuine "no questions" / error
+  // falls back to the prototype copy.
+  const quizGetUrl = sessionId
+    ? `/v1/sessions/${sessionId}/quiz`
+    : `/v1/quiz/${topicId}`;
+  const quizAttemptUrl = sessionId
+    ? `/v1/sessions/${sessionId}/quiz/attempt`
+    : `/v1/quiz/${topicId}/attempt`;
+
   useEffect(() => {
-    if (!sessionId) {
-      setMode('fallback');
-      return;
-    }
     let cancelled = false;
-    api<FetchedQuestion>(`/v1/sessions/${sessionId}/quiz`)
+    api<FetchedQuestion>(quizGetUrl)
       .then((q) => {
         if (cancelled) return;
         setQuestion(q);
@@ -81,22 +86,19 @@ export function QuizScreen({ topicId }: QuizScreenProps) {
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [quizGetUrl]);
 
   const onPick = async (i: number) => {
     if (showFb) return;
     setPicked(i);
     setTimeout(() => setShowFb(true), 350);
 
-    if (mode === 'live' && question && sessionId) {
+    if (mode === 'live' && question) {
       try {
-        const result = await api<AttemptResult>(
-          `/v1/sessions/${sessionId}/quiz/attempt`,
-          {
-            method: 'POST',
-            json: { question_idx: question.idx, picked_idx: i },
-          },
-        );
+        const result = await api<AttemptResult>(quizAttemptUrl, {
+          method: 'POST',
+          json: { question_idx: question.idx, picked_idx: i },
+        });
         setReveal(result);
       } catch {
         // Keep the optimistic UI even if scoring fails.

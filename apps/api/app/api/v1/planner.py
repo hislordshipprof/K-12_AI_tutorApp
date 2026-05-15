@@ -11,7 +11,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.logging import get_logger
 from app.core.security import get_current_user
@@ -75,9 +75,13 @@ def _stub_block_dicts(user_id: UUID, start: date) -> list[dict[str, Any]]:
 @router.get("/planner/week", response_model=PlannerWeekOut)
 async def get_week(
     user: Annotated[dict[str, Any], Depends(get_current_user)],
+    week_start: Annotated[
+        date | None,
+        Query(description="Monday of the week to fetch; defaults to this week"),
+    ] = None,
 ) -> PlannerWeekOut:
     user_id = _user_uuid(user)
-    start = _week_start()
+    start = _week_start(week_start)
     week_end = start + timedelta(days=7)
 
     supabase = get_supabase()

@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { Icon } from '@/components/aria/icon';
@@ -42,6 +42,32 @@ function fmtDate(iso: string): string {
 
 export default function NotesPage() {
   const [tab, setTab] = useState<'notes' | 'cards'>('notes');
+  const queryClient = useQueryClient();
+
+  // Inline "New note" composer state.
+  const [composing, setComposing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState('');
+  const [draftBody, setDraftBody] = useState('');
+
+  const createNote = useMutation({
+    mutationFn: () =>
+      api<NoteRow>('/v1/notes', {
+        method: 'POST',
+        json: {
+          kind: 'user',
+          title: draftTitle.trim() || 'Untitled note',
+          body: draftBody.trim(),
+          color: 'amber',
+          pinned: false,
+        },
+      }),
+    onSuccess: () => {
+      setComposing(false);
+      setDraftTitle('');
+      setDraftBody('');
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    },
+  });
 
   const { data: notes = [], isLoading: notesLoading } = useQuery<NoteRow[]>({
     queryKey: ['notes'],
@@ -112,6 +138,10 @@ export default function NotesPage() {
           </div>
           <button
             type="button"
+            onClick={() => {
+              setTab('notes');
+              setComposing((c) => !c);
+            }}
             className="inline-flex items-center gap-1.5 rounded-[10px] bg-ink px-3.5 py-2 text-[13px] font-semibold text-white transition-all hover:-translate-y-px hover:bg-black"
           >
             <Icon name="plus" size={14} /> New
@@ -121,7 +151,47 @@ export default function NotesPage() {
 
       {tab === 'notes' && (
         <>
-          {notes.length === 0 && !notesLoading && (
+          {composing && (
+            <div className="mt-6 rounded-2xl border border-border bg-white p-4 shadow-sm">
+              <input
+                type="text"
+                value={draftTitle}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                placeholder="Note title"
+                autoFocus
+                className="w-full rounded-lg border border-border bg-paper px-3 py-2 text-sm font-semibold text-ink outline-none focus:border-indigo"
+              />
+              <textarea
+                value={draftBody}
+                onChange={(e) => setDraftBody(e.target.value)}
+                placeholder="Write your note…"
+                rows={3}
+                className="mt-2 w-full resize-y rounded-lg border border-border bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-indigo"
+              />
+              <div className="mt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setComposing(false);
+                    setDraftTitle('');
+                    setDraftBody('');
+                  }}
+                  className="rounded-[10px] border-[1.5px] border-border-2 px-3.5 py-2 text-[13px] font-semibold text-ink-3 transition-colors hover:bg-black/5"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={createNote.isPending || !draftTitle.trim()}
+                  onClick={() => createNote.mutate()}
+                  className="rounded-[10px] bg-ink px-3.5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-black disabled:opacity-50"
+                >
+                  {createNote.isPending ? 'Saving…' : 'Save note'}
+                </button>
+              </div>
+            </div>
+          )}
+          {notes.length === 0 && !notesLoading && !composing && (
             <div className="mt-10 rounded-2xl border border-dashed border-border bg-white px-6 py-14 text-center">
               <div className="text-base font-semibold text-ink">No notes yet</div>
               <div className="mt-1 text-sm text-ink-3">

@@ -11,6 +11,8 @@ export interface HistoryRowData {
   /** Optional — `undefined` when the user hasn't taken the quiz for this lesson yet. */
   score?: number;
   status?: string;
+  /** Topic id — drives "Replay" back into the real lesson. */
+  topicId?: string;
 }
 
 export interface HistoryRowProps {
@@ -24,7 +26,9 @@ export interface HistoryRowProps {
  */
 export function HistoryRow({ row }: HistoryRowProps) {
   const router = useRouter();
-  const target = '/classroom/wave-properties-anatomy';
+  const target = row.topicId
+    ? `/classroom/${row.topicId}`
+    : '/classroom/wave-properties-anatomy';
   const goto = () => router.push(target);
   const hasScore = typeof row.score === 'number';
   const isLow = hasScore && row.score! < 75;

@@ -1,11 +1,15 @@
 'use client';
 
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useMemo } from 'react';
 
 import { Icon } from '@/components/aria/icon';
+import { useMe } from '@/hooks/use-me';
+import { api } from '@/lib/api';
 
 interface CompleteScreenProps {
+  /** Route param — in practice the topic id the lesson/quiz just finished. */
   sessionId: string;
 }
 
@@ -19,19 +23,56 @@ interface ConfettiPiece {
   dur: number;
 }
 
+interface TopicDto {
+  id: string;
+  name: string;
+}
+
+interface HistoryRowApi {
+  topic_id: string | null;
+  duration_min: number | null;
+  score_pct: number | null;
+}
+
 const COLORS = ['#FFC857', '#FF7A59', '#5B5BE5', '#34C97A', '#A78BFA'];
 
 /**
- * Lesson-complete celebration: trophy + scores + CTAs + animated confetti.
+ * Lesson-complete celebration: trophy + real scores + CTAs + confetti.
  *
- * Confetti pieces are deterministic per render (no SSR mismatch) — we
- * still seed positions with Math.random because the component is client-only.
+ * The route param is the topic id. We pull the topic name, the user's
+ * per-topic quiz score + time-spent (from /v1/history), and the streak
+ * (from /v1/me) — no fabricated numbers.
  */
 export function CompleteScreen({ sessionId }: CompleteScreenProps) {
   const router = useRouter();
+  const topicId = sessionId;
+  const { data: me } = useMe();
 
-  // Confetti shape array is fine to recompute on each mount — there are
-  // only 40 pieces and the CSS animation handles the visual loop.
+  const { data: topic } = useQuery<TopicDto | null>({
+    queryKey: ['topic', topicId],
+    queryFn: async () => {
+      try {
+        return await api<TopicDto>(`/v1/topics/${topicId}`);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+
+  const { data: historyRow } = useQuery<HistoryRowApi | null>({
+    queryKey: ['history-row', topicId],
+    queryFn: async () => {
+      try {
+        const rows = await api<HistoryRowApi[]>('/v1/history');
+        return rows.find((r) => r.topic_id === topicId) ?? null;
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+
   const pieces = useMemo<ConfettiPiece[]>(
     () =>
       Array.from({ length: 40 }, (_, i) => ({
@@ -46,8 +87,10 @@ export function CompleteScreen({ sessionId }: CompleteScreenProps) {
     [],
   );
 
-  // sessionId is reserved for future "share / replay" wiring.
-  void sessionId;
+  const topicName = topic?.name ?? 'this lesson';
+  const scorePct = historyRow?.score_pct ?? null;
+  const durationMin = historyRow?.duration_min ?? null;
+  const streak = me?.streak_days ?? 0;
 
   return (
     <div className="screen complete min-h-screen overflow-y-auto">
@@ -75,52 +118,37 @@ export function CompleteScreen({ sessionId }: CompleteScreenProps) {
           Lesson <em>complete!</em>
         </h1>
         <p className="complete-sub">
-          You mastered Wave Properties &amp; Anatomy. That&apos;s <b>+1 topic</b> toward your AP-5
-          goal. Aria has notes saved for you.
+          You worked through <b>{topicName}</b>. Aria has notes saved for you.
         </p>
         <div className="complete-scores">
           <div className="cs">
-            <div className="cs-v gold">92%</div>
+            <div className="cs-v gold">{scorePct != null ? `${scorePct}%` : '—'}</div>
             <div className="cs-l">Quiz score</div>
           </div>
           <div className="cs">
-            <div className="cs-v mint">18m</div>
+            <div className="cs-v mint">{durationMin != null ? `${durationMin}m` : '—'}</div>
             <div className="cs-l">Lesson time</div>
           </div>
           <div className="cs">
-            <div className="cs-v indigo">3</div>
-            <div className="cs-l">Questions asked</div>
+            <div className="cs-v indigo">{streak}</div>
+            <div className="cs-l">Day streak</div>
           </div>
         </div>
         <div className="complete-btns">
           <button
             type="button"
             className="btn btn-primary lg"
-            onClick={() => router.push('/classroom/wave-speed-medium')}
+            onClick={() => router.push('/dashboard')}
           >
-            <Icon name="arrow" size={16} /> Next: Wave Speed &amp; Medium
+            <Icon name="arrow" size={16} /> Choose your next lesson
           </button>
           <button
             type="button"
             className="btn btn-ghost lg"
-            onClick={() => router.push('/')}
+            onClick={() => router.push('/notes')}
           >
-            Back to dashboard
+            Review your notes
           </button>
-        </div>
-        <div
-          style={{
-            marginTop: 32,
-            display: 'flex',
-            gap: 8,
-            justifyContent: 'center',
-            alignItems: 'center',
-            fontSize: 13,
-            color: 'var(--ink-3)',
-          }}
-        >
-          <span>🔥 5 day streak →</span>
-          <b style={{ color: 'var(--ink)' }}>6 day streak</b>
         </div>
       </div>
     </div>

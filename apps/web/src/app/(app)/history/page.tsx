@@ -10,6 +10,7 @@ interface HistoryRowApi {
   id: string;
   topic_id: string | null;
   topic_name: string | null;
+  course: string | null;
   started_at: string;
   ended_at: string | null;
   duration_min: number | null;
@@ -29,7 +30,7 @@ function relDate(iso: string): string {
 
 function toRow(api: HistoryRowApi): HistoryRowData {
   const meta = [
-    'AP Physics 1',
+    api.course,
     api.duration_min ? `${api.duration_min} min` : null,
   ]
     .filter(Boolean)
@@ -40,6 +41,7 @@ function toRow(api: HistoryRowApi): HistoryRowData {
     d: relDate(api.started_at),
     score: api.score_pct ?? undefined,
     status: api.ended_at ? undefined : 'In progress',
+    topicId: api.topic_id ?? undefined,
   };
 }
 

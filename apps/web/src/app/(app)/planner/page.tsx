@@ -1,6 +1,7 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 
 import {
   WeekDayColumn,
@@ -37,6 +38,14 @@ function todayISODate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** ISO date of the Monday `offset` weeks from the current week. */
+function mondayISO(offset: number): string {
+  const d = new Date();
+  const day = (d.getUTCDay() + 6) % 7; // 0 = Monday
+  d.setUTCDate(d.getUTCDate() - day + offset * 7);
+  return d.toISOString().slice(0, 10);
+}
+
 function colorFor(kind: PlannerBlock['kind'], status?: PlannerBlock['status']): WeekBlockColor {
   if (status === 'done') return 'mint done';
   switch (kind) {
@@ -62,12 +71,20 @@ function titleFor(b: PlannerBlock): string {
 
 export default function PlannerPage() {
   const { data: me } = useMe();
+  const queryClient = useQueryClient();
+
+  // 0 = this week, -1 = last week, +1 = next week, …
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [generating, setGenerating] = useState(false);
+  const requestedMonday = mondayISO(weekOffset);
 
   const { data: week } = useQuery<PlannerWeek | null>({
-    queryKey: ['planner-week'],
+    queryKey: ['planner-week', requestedMonday],
     queryFn: async () => {
       try {
-        return await api<PlannerWeek>('/v1/planner/week');
+        return await api<PlannerWeek>(
+          `/v1/planner/week?week_start=${requestedMonday}`,
+        );
       } catch {
         return null;
       }
@@ -75,8 +92,23 @@ export default function PlannerPage() {
     staleTime: 30_000,
   });
 
+  async function generatePlan() {
+    setGenerating(true);
+    try {
+      await api('/v1/planner/regenerate', {
+        method: 'POST',
+        json: { week_start: requestedMonday },
+      });
+      await queryClient.invalidateQueries({ queryKey: ['planner-week'] });
+    } catch {
+      // Surface nothing — the empty state stays visible on failure.
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   const today = todayISODate();
-  const weekStart = week?.week_start ?? today;
+  const weekStart = week?.week_start ?? requestedMonday;
   const days: WeekDay[] = DAY_LABELS.map((label, i) => {
     const { iso, n } = addDays(weekStart, i);
     const dayBlocks = (week?.blocks ?? []).filter((b) => b.date === iso);
@@ -107,24 +139,36 @@ export default function PlannerPage() {
             to reschedule.
           </div>
         </div>
-        <div className="flex gap-2.5">
+        <div className="flex items-center gap-2.5">
           <button
             type="button"
+            onClick={() => setWeekOffset((o) => o - 1)}
             className="rounded-[10px] border-[1.5px] border-border-2 bg-transparent px-3.5 py-2 text-[13px] font-semibold text-ink transition-colors hover:bg-black/5"
           >
-            ← Last week
+            ← {weekOffset <= 0 ? 'Earlier' : 'Previous'} week
           </button>
           <button
             type="button"
-            className="rounded-[10px] border-[1.5px] border-border-2 bg-transparent px-3.5 py-2 text-[13px] font-semibold text-ink transition-colors hover:bg-black/5"
+            onClick={() => setWeekOffset(0)}
+            disabled={weekOffset === 0}
+            className="rounded-[10px] border-[1.5px] border-border-2 bg-transparent px-3.5 py-2 text-[13px] font-semibold text-ink transition-colors hover:bg-black/5 disabled:opacity-40"
           >
             This week
           </button>
           <button
             type="button"
-            className="rounded-[10px] bg-ink px-3.5 py-2 text-[13px] font-semibold text-white transition-all hover:-translate-y-px hover:bg-black"
+            onClick={() => setWeekOffset((o) => o + 1)}
+            className="rounded-[10px] border-[1.5px] border-border-2 bg-transparent px-3.5 py-2 text-[13px] font-semibold text-ink transition-colors hover:bg-black/5"
           >
-            Generate next →
+            Next week →
+          </button>
+          <button
+            type="button"
+            onClick={() => void generatePlan()}
+            disabled={generating}
+            className="rounded-[10px] bg-ink px-3.5 py-2 text-[13px] font-semibold text-white transition-all hover:-translate-y-px hover:bg-black disabled:opacity-50"
+          >
+            {generating ? 'Generating…' : 'Generate plan'}
           </button>
         </div>
       </div>

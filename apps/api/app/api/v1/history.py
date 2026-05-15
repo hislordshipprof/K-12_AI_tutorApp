@@ -81,18 +81,55 @@ async def list_history(
 
     topic_ids = list({s["topic_id"] for s in sessions if s.get("topic_id")})
 
-    # Topic names — bulk lookup.
+    # Topic names + course — bulk lookup across topics → units → courses
+    # so each row carries its real course (never a hardcoded label).
     topic_names: dict[str, str] = {}
+    topic_course: dict[str, str] = {}
     if topic_ids:
         try:
             resp = (
                 supabase.table("topics")
-                .select("id,name")
+                .select("id,name,unit_id")
                 .in_("id", topic_ids)
                 .execute()
             )
-            for row in (getattr(resp, "data", None) or []):
+            topic_rows = getattr(resp, "data", None) or []
+            for row in topic_rows:
                 topic_names[str(row["id"])] = row.get("name") or ""
+
+            unit_ids = list({r["unit_id"] for r in topic_rows if r.get("unit_id")})
+            unit_course: dict[str, str] = {}
+            if unit_ids:
+                u_resp = (
+                    supabase.table("units")
+                    .select("id,course_id")
+                    .in_("id", unit_ids)
+                    .execute()
+                )
+                unit_rows = getattr(u_resp, "data", None) or []
+                course_ids = list(
+                    {r["course_id"] for r in unit_rows if r.get("course_id")}
+                )
+                course_title: dict[str, str] = {}
+                if course_ids:
+                    c_resp = (
+                        supabase.table("courses")
+                        .select("id,title")
+                        .in_("id", course_ids)
+                        .execute()
+                    )
+                    for c in (getattr(c_resp, "data", None) or []):
+                        course_title[str(c["id"])] = c.get("title") or ""
+                for u in unit_rows:
+                    if u.get("course_id"):
+                        unit_course[str(u["id"])] = course_title.get(
+                            str(u["course_id"]), ""
+                        )
+            for row in topic_rows:
+                if row.get("unit_id"):
+                    topic_course[str(row["id"])] = unit_course.get(
+                        str(row["unit_id"]), ""
+                    )
         except Exception as e:  # noqa: BLE001
             log.warning("history_topic_lookup_failed", error=str(e))
 
@@ -141,6 +178,7 @@ async def list_history(
                 "id": s["id"],
                 "topic_id": s.get("topic_id"),
                 "topic_name": topic_names.get(tid),
+                "course": topic_course.get(tid) or None,
                 "started_at": s.get("started_at"),
                 "ended_at": s.get("ended_at"),
                 "duration_min": duration_min,

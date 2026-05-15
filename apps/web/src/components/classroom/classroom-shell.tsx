@@ -398,7 +398,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
 
         {/* TOP CONTROLS */}
         <div className="cr-top">
-          <button type="button" className="cr-back" onClick={() => router.push('/')}>
+          <button type="button" className="cr-back" onClick={() => router.push('/dashboard')}>
             <Icon name="prev" size={14} /> Exit lesson
           </button>
           <div className="cr-progress">
