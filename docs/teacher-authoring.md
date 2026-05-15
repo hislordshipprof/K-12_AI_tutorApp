@@ -2,8 +2,9 @@
 
 > Status: DESIGN — not yet built. Last updated 2026-05-15.
 > Decisions locked: class+join-code linking · slides shown WITH Aria
-> annotation · ingest PDF/Word/PowerPoint/plain-text · build the design
-> doc first (this file).
+> annotation · ingest PDF/Word/PowerPoint/plain-text · uploads normalised
+> to PDF then read by a multimodal model for comprehension + rendered to
+> page images for display · build the design doc first (this file).
 
 ## 1. Goal
 
@@ -81,15 +82,16 @@ class_courses                              -- which teacher courses a class sees
   primary key (class_id, course_id)
 
 lesson_materials                           -- the teacher's raw uploads
-  id            uuid pk
-  topic_id      uuid references topics(id)
-  kind          text          -- 'notes' | 'slides'
-  storage_path  text          -- Supabase Storage object key
-  filename      text
-  mime          text
-  extracted_text text          -- text pulled out at upload time
-  uploaded_by   uuid references profiles(id)
-  uploaded_at   timestamptz
+  id              uuid pk
+  topic_id        uuid references topics(id)
+  kind            text        -- 'notes' | 'slides'
+  storage_path    text        -- original upload (Supabase Storage key)
+  normalized_pdf  text        -- the upload converted to PDF (universal form)
+  filename        text
+  mime            text
+  comprehension   jsonb       -- the model's structured read of the document
+  uploaded_by     uuid references profiles(id)
+  uploaded_at     timestamptz
 
 topic_slides                               -- rendered slide images for the classroom
   topic_id     uuid references topics(id)
@@ -136,27 +138,48 @@ A sibling of the existing OpenStax pipeline. Same destination
 (`topics.content`), different source.
 
 ```
-upload → extract → generate → validate → review → publish
+upload → normalize → ┬─ comprehend (model) ─┐
+                     └─ render (assets)  ───┴─ generate → validate → review → publish
 ```
 
-- **Extract** — pull text from each upload:
-  - PDF → `pymupdf` (text; also renders page images for slides).
-  - Word `.docx` → `python-docx`.
-  - PowerPoint `.pptx` → `python-pptx` (text). For slide *images*, the
-    reliable path is render-from-PDF: convert the deck to PDF, then
-    `pymupdf` renders each page → PNG → `topic_slides`. (Decision: ask
-    teachers to also export the deck as PDF, or run a server-side
-    LibreOffice conversion — see §11.)
-  - Plain text / paste → stored as-is.
-- **Generate** — Gemini/Claude receives: the extracted material +
-  `course_style.teaching_style` + the topic's `design_notes`. It writes
-  the Aria lesson steps. **Depth scales with the material** — the fixed
-  8-step rubric is dropped; a lesson is as long as the content needs
-  (roughly one step per concept / per slide).
-- **Validate** — check the lesson actually covers the teacher's key
-  points (the existing validator pattern, run against the teacher's
-  material instead of OpenStax).
-- **Review** — teacher edits in the board before publishing.
+Key principle: **a model comprehends a document; it cannot hand back the
+asset files inside it.** So upload splits into two tracks — model
+comprehension (for understanding/generation) and mechanical rendering
+(for the images we actually display).
+
+- **Normalize → PDF.** Every upload becomes a PDF — the universal
+  intermediate that the comprehension model reads AND that we render to
+  images. No per-format branching downstream.
+  - PDF → used as-is.
+  - Word `.docx`, PowerPoint `.pptx` → converted to PDF via a
+    server-side LibreOffice headless step (a Docker layer on the API).
+  - Plain text / paste → wrapped into a PDF.
+
+- **Comprehend (model track).** The PDF is handed directly to Gemini as
+  a multimodal input — the model *reads the whole document*: prose,
+  tables, equations, and the figures/diagrams. This far outperforms
+  mechanical text scraping (pypdf/python-docx) — it handles scanned
+  pages, handwriting, equations and messy layout. Output: structured
+  `comprehension` JSON — sections, key points, per-figure descriptions,
+  and a page→concept mapping — stored on `lesson_materials`.
+
+- **Render (asset track).** In parallel, each PDF page is rendered to a
+  PNG (`pymupdf`) → `topic_slides`. This is the *only* mechanical step
+  and it is reliable. The model can *describe* a diagram but cannot
+  return the pixels, so to *display* the teacher's real slides/figures
+  we render them ourselves.
+
+- **Generate.** The model writes the Aria lesson from the `comprehension`
+  JSON + `course_style.teaching_style` + the topic's `design_notes`.
+  **Depth scales with the material** — the fixed 8-step rubric is
+  dropped; a lesson is as long as the content needs (roughly one step
+  per concept / per slide). Each step is mapped to the page it covers.
+
+- **Validate.** Check the lesson actually covers the teacher's key
+  points (the existing validator pattern, run against the
+  `comprehension` output instead of OpenStax).
+
+- **Review.** Teacher edits in the board before publishing.
 
 Each generated step keeps today's shape and gains an optional slide
 reference:
@@ -164,6 +187,13 @@ reference:
 ```
 { tts, html, dur, scene, slideIndex? }
 ```
+
+> **On animations.** PowerPoint builds/transitions are playback
+> instructions, not content — they do not transfer and are not a goal.
+> We render each slide's *final state*; the "build-up" pacing is
+> recreated natively by Aria's word-timed narration and live scene
+> annotation, synced to her voice. That replaces slide animation with
+> something better.
 
 ## 7. Slides + annotation in the classroom
 
@@ -222,9 +252,13 @@ their own prefix; the pipeline reads via the service role.
 
 1. **Becoming a teacher** — invite-only (admin flag) vs self-serve
    signup. Recommend invite-only for v1.
-2. **pptx → slide images** — `python-pptx` gives text but not rendered
-   images. Options: (a) teacher also uploads the deck as PDF; (b)
-   server-side LibreOffice headless conversion. Recommend (a) for v1.
+2. **Document conversion** — RESOLVED (§6): all uploads normalise to PDF,
+   then a multimodal model comprehends them and `pymupdf` renders page
+   images. The one infra dependency is **LibreOffice headless** for
+   Word/PowerPoint → PDF — bundled as a Docker layer on the API image
+   (~adds build size but is the standard, reliable path). Fallback if we
+   want to avoid the layer: accept PDF-only at first and add Office
+   conversion in Phase 2.
 3. **Re-generation / versioning** — if a teacher re-generates a
    published lesson, keep a version or overwrite. Recommend overwrite +
    a `content_provenance` timestamp for v1.
@@ -236,9 +270,10 @@ their own prefix; the pipeline reads via the service role.
 
 1. **Foundations** — migration (the §4 schema), `lesson-materials`
    Storage bucket, RLS, a `role` check helper. No UI.
-2. **Authoring pipeline** — extractors (pdf/docx/pptx/text), slide
-   rendering, depth-scaled style-aware generation, validator. Proven
-   via a script on one real teacher upload.
+2. **Authoring pipeline** — normalize-to-PDF (LibreOffice headless),
+   multimodal comprehension, page-image rendering (`pymupdf`),
+   depth-scaled style-aware generation, validator. Proven via a script
+   on one real teacher upload.
 3. **Admin board** — the `/teach` pages (§9).
 4. **Student side** — dashboard split, class join, classroom slide+
    annotation rendering (§7).
