@@ -1,103 +1,73 @@
-# Build Progress — FINAL
+# Build Progress
 
-> Built autonomously overnight by parallel Claude Code agents. Verified end-to-end against real Gemini.
+> Last updated: 2026-05-15. Living log of what's been built, phase by phase.
 
 ## Summary
 
-| Phase | Status | LoC | Key deliverables |
-|---|---|---|---|
-| 0 — Foundation | ✅ | ~1500 | Monorepo, .gitignore, docs, CI/CD |
-| 1 — Backbone | ✅ | ~3300 | DB schema, FastAPI, Next.js scaffolds, design tokens |
-| 2 — Screens | ✅ | ~6700 | All 9 prototype screens ported |
-| 3 — AI agents | ✅ | ~1500 | TutorAgent, VisionAgent, VoiceAgent (all on real Gemini) |
-| 4 — Polish | 🟡 partial | — | Voice config fix done; Playwright E2E deferred |
+| Phase | Status | Key deliverables |
+|---|---|---|
+| 0 — Foundation | ✅ | Monorepo, FastAPI + Next.js scaffolds, Supabase schema, CI/CD |
+| 1 — Backbone | ✅ | DB schema (16 tables, RLS, pgvector), design tokens |
+| 2 — Screens | ✅ | All 9 prototype screens ported to Next.js |
+| 3 — AI agents | ✅ | TutorAgent, VisionAgent, VoiceAgent on real Gemini |
+| 4 — Real data | ✅ | Every hardcoded fixture replaced with live `/v1` data |
+| 5 — Content pipeline | ✅ | RAG ingest → 26 OpenStax-grounded lessons + 78 quiz questions |
+| 6 — Curriculum + security | ✅ | CED-2024 unit trees, AP Physics 1 sub-topics, security audit |
+| 7 — Live drawing | ✅ | Word-timed reveal + 12 typed scenes + model-drawn fallback |
+| 8 — Ship prep | 🟡 | Observability + deploy + secret rotation still open |
 
-**Total**: ~13,000 lines of code + ~2,000 lines of docs.
+## Phase detail
 
-## Real Gemini end-to-end verified
+### Phases 0–3 — foundation, screens, agents
+- pnpm + Turborepo monorepo; Next.js 15 / React 19 / Tailwind 3.4; FastAPI + google-genai.
+- Supabase: 16 tables, RLS on every user-owned table, pgvector for embeddings.
+- All 9 screens: Landing, Onboarding, Dashboard, Planner, Notes, History, Classroom, Quiz, Complete.
+- AI agents on real Gemini: stateful Socratic `TutorAgent`, `VisionAgent` (sketch analysis),
+  `VoiceAgent` (Gemini Live bidi audio). Hint ladder, reactions, multi-turn session state.
 
-Calls made with the user's real Gemini API key:
+### Phase 4 — real data
+- Replaced every hardcoded UI fixture with live backend data (`refactor(web): replace every
+  hardcoded fixture with real /v1 data`).
+- Added `/v1/me`, `/v1/history`, `/v1/courses/{slug}/units`; dashboard, planner, notes,
+  history all round-trip real Supabase rows.
 
-### Q&A (gemini-2.5-flash via SSE)
-> Q: "What is wave speed?"
-> A: *"That's a great question to kick things off. Before we dive into waves, how would you describe 'speed' for something you're more familiar with, like a car or a runner? What do you usually need to know to figure out how fast they're going?"*
+### Phase 5 — content pipeline
+- RAG ingestion: OpenStax (CC BY 4.0) chapters → chunk → embed (`lesson_embeddings`,
+  pgvector HNSW) → Gemini generates 8-step Aria-voice lessons → 3-gate validator → persist.
+- 26 topics now carry real RAG-grounded lesson content; retrieval wired into `TutorAgent`.
+- Quiz generation pipeline: 78 questions across 26 topics; quiz endpoints are DB-backed.
 
-→ Socratic. Doesn't define wave speed. Builds analogy.
+### Phase 6 — curriculum + security
+- Unit trees aligned to College Board CED 2024 (Physics 1, Calc BC, Biology).
+- AP Physics 1 expanded: 8 unit overviews + 16 sub-topics (42 mapping slugs total).
+- Security audit + fixes: IDOR ownership checks, service-role scoping, prod env guards,
+  rate limiting, bounded uploads.
 
-### Sketch analysis (gemini-2.5-flash multimodal)
-> Sent a sine-wave PNG.
-> Recognition: `{shape: "wave", confidence: 1.0, intent: "periodic wave"}`
-> Response: *"That's a very clear periodic wave you've sketched! What specifically were you thinking of when you drew this, and what physics concept does it represent to you?"*
+### Phase 7 — live drawing ("the lesson draws itself")
+- **A — word-timed reveal**: caption + chalkboard headline write themselves word-by-word,
+  synced to Aria's TTS audio clock (`TimedReveal`).
+- **B — typed scenes**: 12 parametric SVG diagram components (free-body, projectile arc,
+  wave, circular motion, energy bar chart, …) that draw in sync with audio. A deterministic
+  keyword tagger (`app/content/scene_tagger.py`) assigns scenes — no LLM, fully auditable.
+- **C — model-drawn fallback**: for steps no typed scene fits, a model emits a structured
+  primitive list (line/arrow/rect/circle/path/text…), validated against a whitelist, stored
+  as `scene:{type:"custom-svg"}`. Never raw SVG — no injection surface.
+- **Coverage: 100%** — all 224 non-intro lesson steps have a scene (83 typed + 141
+  model-drawn by Claude Sonnet 4.6).
+- Follow-up Q&A answers draw scenes too (same engine, via an SSE `scene` frame).
 
-→ Vision works. Asks student to articulate intent.
+## Current state
 
-### Reply (continues from above)
-> Student: "I think wave speed is how fast it moves"
-> A: *"That's a fantastic way to put it! You're absolutely right; it's about how quickly the wave travels from one place to another. So, thinking back to our car example, what things would you need to measure to figure out how fast a car is moving?"*
+- **API tests**: 169 pytest passing.
+- **Web**: typecheck / lint / production build clean; 5 Playwright E2E specs.
+- **Models**: see `docs/RESUME.md` § Models.
+- **Content**: every topic has a generated lesson; 100% scene coverage; 78 quiz questions.
+- **Supabase**: cloud project `molsszjunoffjkzfgiyw`, all migrations applied.
 
-→ Multi-turn dialog. Connects back to the car analogy. Praises briefly. Pushes deeper.
+## What's left (see `docs/production-checklist.md` for the full matrix)
 
-### Voice (gemini-2.5-flash-native-audio-latest via WebSocket)
-> WS connect → `{type: ready}`
-> Sent text frame → real PCM audio chunks stream back (73K+ b64 chars).
-
-→ Aria literally speaks back. Audio pipeline works end-to-end.
-
-### Reaction (canned response)
-> Student tapped 🐢 (slower)
-> Aria: *"Got it — let's slow this right down. Tell me which part felt fuzzy and we'll back up from there together."*
-
-## Commits
-
-```
-937b747 fix(voice): plumb Aria persona + AUDIO modality through Gemini Live config
-2caa021 feat: phase 3 — AI agent layer (stateful tutor + vision + voice)
-9086ddb feat: phase 2 — port all 9 prototype screens to Next.js
-9c88140 chore: foundation — monorepo + FastAPI + Next.js scaffolds + Supabase schema
-```
-
-## Test totals
-
-- API: **75 pytest tests passing** (18 → 75 across phases)
-- Web: typecheck/lint/build all clean
-- Smoke: all 9 routes HTTP 200; all AI endpoints respond Socratically
-
-## What's working live
-
-| Feature | Status |
-|---|---|
-| All 9 prototype screens render | ✅ |
-| Q&A streaming with real Gemini | ✅ |
-| Sketch analysis with Gemini Vision | ✅ |
-| Voice mode with Gemini Live (audio in + out) | ✅ |
-| Multi-turn dialog with session state | ✅ |
-| Reactions (🐢 😕 💡 🤯) | ✅ |
-| Reply bar (typed answers) | ✅ |
-| Quiz me now | ✅ (UI; AI scoring is local for now) |
-| Peer presence | ✅ (static; live channel can swap in) |
-
-## What's stubbed (deferred)
-
-| Feature | Status |
-|---|---|
-| Real Supabase wiring for DB CRUD | 🟡 routes return sample data; schema + migrations ready |
-| Auth (Supabase magic link) | 🟡 DEV_MODE bypass works for local dev; login UI not built |
-| Mobile classroom layout | 🟡 desktop-optimized; mobile responsive at top level |
-| Sentry / observability | 🟡 agent_traces table ready; not yet populated |
-| Cost guardrails | 🟡 per-user quotas not implemented |
-| Playwright E2E suite | 🟡 deferred — manual smoke + 75 unit tests pass |
-
-## Latest models (verified via real models.list())
-
-- `gemini-2.5-flash` — text + vision
-- `gemini-2.5-flash-native-audio-latest` — Live voice (bidi WS)
-- `gemini-2.5-pro` — reasoning (planner agent)
-- `gemini-embedding-001` — embeddings (768-dim to match `vector(768)` DB)
-
-## Build environment notes
-
-- Built in an air-gapped Linux sandbox (no internet) — adapted accordingly:
-  - Switched from `next/font/google` (build-time fetch) to runtime `<link>` (same UX in real browsers)
-  - Set `NODE_OPTIONS='--max-old-space-size=4096'` for Next builds (default heap too small for the classroom shell)
-  - Commit signing disabled in this env (signing server returns 400 — infra issue, not user choice)
-- All Gemini calls in this build used the user's real API key. Estimated total cost: under $0.05.
+1. **Observability** — `agent_traces` writer + Sentry. Not built.
+2. **Deploy** — Vercel (web) + Fly.io (api). Configs ready; needs user-driven link/launch.
+3. **Secret rotation** — Supabase `service_role` + the Anthropic key before any deploy.
+4. **Feature polish** — flashcard deck-builder UI, history click-to-replay, mobile
+   classroom layout, web unit tests, per-user token quota, Terms/Privacy pages.
