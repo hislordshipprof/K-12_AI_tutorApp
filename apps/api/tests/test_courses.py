@@ -77,12 +77,19 @@ def test_list_courses_falls_back_when_supabase_throws_in_dev(
 
 
 # ─── /topics/{id} ─────────────────────────────────────────────────────────
-def test_get_topic_404_via_sample(client: Any, dev_headers: dict[str, str]) -> None:
-    """Unknown topic in dev fallback returns 404."""
+def test_get_topic_returns_derived_fallback_when_unknown(
+    client: Any, dev_headers: dict[str, str]
+) -> None:
+    """Unknown topic returns a derived fallback (200) so the classroom page
+    still renders rather than 404-ing mid-navigation. `id` is null and
+    `has_content` is false — UI uses that to know it's a stub."""
     r = client.get(
         "/v1/topics/00000000-0000-0000-0000-000000000000", headers=dev_headers
     )
-    assert r.status_code == 404
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] is None
+    assert body["has_content"] is False
 
 
 def test_get_topic_from_supabase(
@@ -112,7 +119,7 @@ def test_get_topic_from_supabase(
     sb._chain.eq.assert_any_call("id", "22222222-2222-2222-2222-222222222222")
 
 
-def test_get_topic_returns_404_when_supabase_empty(
+def test_get_topic_returns_derived_fallback_when_supabase_empty(
     client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sb = _build_supabase_mock([])
@@ -120,4 +127,7 @@ def test_get_topic_returns_404_when_supabase_empty(
     r = client.get(
         "/v1/topics/44444444-4444-4444-4444-444444444444", headers=dev_headers
     )
-    assert r.status_code == 404
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] is None
+    assert body["has_content"] is False

@@ -76,6 +76,17 @@ export async function api<T = unknown>(path: string, options: ApiOptions = {}): 
     finalHeaders.Authorization = `Bearer ${token}`;
   }
 
+  // Demo / preview mode: API has DEV_MODE=true and accepts an X-Dev-User-Id
+  // header in lieu of a real JWT. We pin it to the seeded demo user so
+  // session inserts satisfy the foreign-key constraint against auth.users.
+  if (
+    process.env.NEXT_PUBLIC_DEMO_MODE === 'true' &&
+    !finalHeaders.Authorization &&
+    !finalHeaders['X-Dev-User-Id']
+  ) {
+    finalHeaders['X-Dev-User-Id'] = '00000000-0000-0000-0000-000000000001';
+  }
+
   const response = await fetch(url, {
     ...init,
     headers: finalHeaders,

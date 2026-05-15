@@ -112,45 +112,112 @@ async def list_courses() -> list[dict[str, Any]]:
     return _SAMPLE_COURSES
 
 
-@router.get("/topics/{topic_id}", response_model=TopicOut)
+@router.get("/topics/{topic_id}")
 async def get_topic(
-    topic_id: UUID,
-    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+    topic_id: str,
 ) -> dict[str, Any]:
-    """Authenticated — full topic content (lesson steps + summary)."""
+    """Public-read topic metadata + lesson content for the classroom page.
+
+    Accepts a UUID (real DB topic) or a free-form slug (back-compat with
+    the prototype's `wave-properties-anatomy` fixture). Topic data is
+    already public-read at the RLS layer, so leaving this unauthenticated
+    lets Next's SSR fetch this without plumbing the user JWT through.
+
+    Returns a derived stub when the lookup fails so the classroom page
+    still renders rather than 404'ing mid-navigation.
+
+    Shape:
+        {
+          "id": "<uuid>" | null,
+          "slug": "<route param>",
+          "name": "Oscillations: Amplitude, Period & Frequency",
+          "unit_n": 7,
+          "unit_name": "Oscillations",
+          "course_slug": "ap-physics-1",
+          "has_content": true,
+          "content": [{"tts": "...", "html": "...", "dur": "00:00"}, ...] | null,
+        }
+    """
+    # UUID-style params get a clean "Lesson" placeholder; slugs get
+    # titlecased while we resolve.
+    try:
+        UUID(topic_id)
+        is_uuid = True
+        fallback_name = "Lesson"
+    except (ValueError, AttributeError):
+        is_uuid = False
+        fallback_name = topic_id.replace("-", " ").title()
+
+    fallback: dict[str, Any] = {
+        "id": None,
+        "slug": topic_id,
+        "name": fallback_name,
+        "unit_n": None,
+        "unit_name": "Unit",
+        "course_slug": None,
+        "has_content": False,
+        "content": None,
+    }
+
     supabase = get_supabase()
-    if supabase is not None:
-        try:
-            resp = (
-                supabase.table("topics")
-                .select("*")
-                .eq("id", str(topic_id))
+    if supabase is None or not is_uuid:
+        return fallback
+
+    try:
+        t_resp = (
+            supabase.table("topics")
+            .select("id, n, name, unit_id, content")
+            .eq("id", topic_id)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(t_resp, "data", None) or []
+        if not rows:
+            return fallback
+        row = rows[0]
+
+        u_resp = (
+            supabase.table("units")
+            .select("n, name, course_id")
+            .eq("id", row["unit_id"])
+            .limit(1)
+            .execute()
+        )
+        u_rows = getattr(u_resp, "data", None) or []
+        unit = u_rows[0] if u_rows else {}
+
+        course_slug: str | None = None
+        if unit.get("course_id"):
+            c_resp = (
+                supabase.table("courses")
+                .select("slug")
+                .eq("id", unit["course_id"])
                 .limit(1)
                 .execute()
             )
-            rows = getattr(resp, "data", None) or []
-            if rows:
-                return rows[0]
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found"
-            )
-        except HTTPException:
-            raise
-        except Exception as e:  # noqa: BLE001
-            log.warning("topic_supabase_failed", error=str(e), topic_id=str(topic_id))
-            if supabase_enabled():
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="topic unavailable",
-                ) from e
+            c_rows = getattr(c_resp, "data", None) or []
+            if c_rows:
+                course_slug = c_rows[0].get("slug")
 
-    # Dev fallback.
-    topic = _SAMPLE_TOPICS.get(topic_id)
-    if topic is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found"
+        content = row.get("content")
+        has_content = bool(
+            content
+            and (not isinstance(content, str) or content not in ("", "null", "{}"))
         )
-    return topic
+
+        return {
+            "id": str(row["id"]),
+            "slug": str(row["id"]),
+            "name": row["name"],
+            "unit_n": unit.get("n"),
+            "unit_name": unit.get("name") or "Unit",
+            "course_slug": course_slug,
+            "has_content": has_content,
+            "content": content if has_content else None,
+        }
+    except Exception as e:  # noqa: BLE001
+        log.warning("topic_details_supabase_failed", error=str(e), topic=topic_id)
+        return fallback
 
 
 # ─── Curriculum tree ──────────────────────────────────────────────────────
@@ -244,102 +311,3 @@ async def list_course_units(
         return []
 
 
-# ── single topic details ────────────────────────────────────────────────────
-@router.get("/topics/{topic_id}")
-async def get_topic_details(
-    topic_id: str,
-    _user: Annotated[dict[str, Any], Depends(get_current_user)],
-) -> dict[str, Any]:
-    """Return one topic's metadata for the classroom page.
-
-    Accepts either a UUID (for real DB topics) or a free-form slug (kept
-    for back-compat with the prototype's `wave-properties-anatomy`
-    fixture). When the lookup fails we return a derived stub so the
-    classroom still renders — better than a 500 mid-navigation.
-
-    Shape:
-        {
-          "id": "<uuid>" | null,
-          "slug": "<route param>",
-          "name": "Kinematics",
-          "unit_n": 1,
-          "unit_name": "Kinematics",
-          "course_slug": "ap-physics-1",
-          "has_content": true,
-        }
-    """
-    # Always-available fallback (used in tests + dev with no DB).
-    fallback: dict[str, Any] = {
-        "id": None,
-        "slug": topic_id,
-        "name": topic_id.replace("-", " ").title(),
-        "unit_n": None,
-        "unit_name": "Unit",
-        "course_slug": None,
-        "has_content": False,
-    }
-
-    supabase = get_supabase()
-    if supabase is None:
-        return fallback
-
-    # If the param parses as UUID, look up by id. Otherwise leave fallback.
-    try:
-        topic_uuid = str(UUID(topic_id))
-    except (ValueError, AttributeError):
-        return fallback
-
-    try:
-        t_resp = (
-            supabase.table("topics")
-            .select("id, n, name, unit_id, content")
-            .eq("id", topic_uuid)
-            .limit(1)
-            .execute()
-        )
-        rows = getattr(t_resp, "data", None) or []
-        if not rows:
-            return fallback
-        row = rows[0]
-
-        u_resp = (
-            supabase.table("units")
-            .select("n, name, course_id")
-            .eq("id", row["unit_id"])
-            .limit(1)
-            .execute()
-        )
-        u_rows = getattr(u_resp, "data", None) or []
-        unit = u_rows[0] if u_rows else {}
-
-        course_slug: str | None = None
-        if unit.get("course_id"):
-            c_resp = (
-                supabase.table("courses")
-                .select("slug")
-                .eq("id", unit["course_id"])
-                .limit(1)
-                .execute()
-            )
-            c_rows = getattr(c_resp, "data", None) or []
-            if c_rows:
-                course_slug = c_rows[0].get("slug")
-
-        content = row.get("content")
-        has_content = bool(
-            content
-            and (not isinstance(content, str) or content not in ("", "null", "{}"))
-        )
-
-        return {
-            "id": str(row["id"]),
-            "slug": topic_uuid,
-            "name": row["name"],
-            "unit_n": unit.get("n"),
-            "unit_name": unit.get("name") or "Unit",
-            "course_slug": course_slug,
-            "has_content": has_content,
-        }
-    except Exception as e:  # noqa: BLE001
-        log.warning("topic_details_supabase_failed", error=str(e), topic=topic_id)
-        return fallback

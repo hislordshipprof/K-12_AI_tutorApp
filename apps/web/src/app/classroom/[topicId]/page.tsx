@@ -14,6 +14,7 @@ interface TopicDetails {
   unit_name: string;
   course_slug: string | null;
   has_content: boolean;
+  content: Array<{ tts: string; html: string; dur: string }> | null;
 }
 
 /**
@@ -32,10 +33,17 @@ export default async function ClassroomPage({ params }: PageProps) {
 
   const apiBase =
     process.env.NEXT_PUBLIC_API_BASE ?? process.env.API_BASE_URL ?? '';
+  // UUID route params get a clean "Lesson" placeholder rather than a
+  // mangled hex string while the API fetch resolves.
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    topicId,
+  );
   let topic: ClassroomTopic = {
     slug: topicId,
     unit: 'Unit',
-    title: topicId.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+    title: isUuid
+      ? 'Lesson'
+      : topicId.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
   };
 
   if (apiBase) {
@@ -52,6 +60,7 @@ export default async function ClassroomPage({ params }: PageProps) {
           slug: details.id ?? details.slug,
           unit: details.unit_n ? `Unit ${details.unit_n}` : details.unit_name,
           title: details.name,
+          content: details.content ?? null,
         };
       }
     } catch {

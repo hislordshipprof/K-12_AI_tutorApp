@@ -83,7 +83,14 @@ export function useSession(topicSlug: string): UseSessionResult {
 
   const startMut = useMutation<SessionOut, ApiError | Error, string>({
     mutationFn: async (slug: string) => {
-      const topicUuid = topicSlugToUuid(slug);
+      // If the route param already IS a UUID (real DB topic), use it
+      // directly so the session row's topic_id matches what's in
+      // `topics` / `quiz_questions`. Otherwise hash the legacy slug.
+      const looksLikeUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          slug,
+        );
+      const topicUuid = looksLikeUuid ? slug : topicSlugToUuid(slug);
       return await api<SessionOut>('/v1/sessions', {
         method: 'POST',
         json: { topic_id: topicUuid },

@@ -138,6 +138,14 @@ export interface ClassroomTopic {
   slug: string;
   unit: string;
   title: string;
+  /**
+   * Lesson steps from `topics.content` jsonb when the route resolves to a
+   * real DB topic. Each step matches the schema produced by the content
+   * pipeline: `{tts, html, dur}`. When null, the hardcoded `LESSON_STEPS`
+   * fallback below renders so the prototype + Playwright fixtures still
+   * work.
+   */
+  content?: Array<{ tts: string; html: string; dur: string }> | null;
 }
 
 interface ClassroomShellProps {
@@ -156,6 +164,36 @@ interface ClassroomShellProps {
 export function ClassroomShell({ topic }: ClassroomShellProps) {
   const router = useRouter();
   const { sessionId } = useSession(topic.slug);
+
+  // Prefer the real lesson content from `topics.content` when present;
+  // fall back to the hardcoded wave-properties demo otherwise. The shape
+  // is identical so downstream playback/MathContent code is unchanged.
+  const lessonSteps: LessonStep[] = useMemo(() => {
+    if (topic.content && topic.content.length > 0) {
+      return topic.content.map((s) => ({
+        html: s.html,
+        tts: s.tts,
+        dur: s.dur,
+      }));
+    }
+    return LESSON_STEPS;
+  }, [topic.content]);
+  const stepTitles: string[] = useMemo(() => {
+    if (topic.content && topic.content.length > 0) {
+      return topic.content.map((s, i) => {
+        if (i === 0) return '';
+        // Derive a short title from the html by stripping tags + LaTeX +
+        // truncating. Keeps the outline readable without a separate field.
+        const plain = s.html
+          .replace(/<[^>]+>/g, '')
+          .replace(/\$\$[^$]+\$\$/g, '')
+          .replace(/\$[^$]+\$/g, '')
+          .trim();
+        return plain.split(/[.?!]/)[0]?.slice(0, 36) || `Step ${i}`;
+      });
+    }
+    return STEP_TITLES;
+  }, [topic.content]);
 
   const [step, setStep] = useState(2);
   const [playing, setPlaying] = useState(true);
@@ -181,7 +219,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
   // Quiz-me-now interrupt.
   const [quizMeOpen, setQuizMeOpen] = useState(false);
 
-  const total = LESSON_STEPS.length - 1;
+  const total = lessonSteps.length - 1;
   const tts = useTtsPlayback({ muted, rate: 1 });
   const { speaking } = tts;
   /** Bookmark snapshot taken whenever an overlay interrupts playback. */
@@ -211,7 +249,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
   // the captured offset instead of restarting from the top.
   useEffect(() => {
     if (!playing || qaOpen || voiceOpen || sketchOn || quizMeOpen || reactionMsg) return;
-    const s = LESSON_STEPS[step];
+    const s = lessonSteps[step];
     if (!s) return;
     const resumeFromMs =
       bookmark && bookmark.stepIndex === step ? bookmark.audioOffsetMs : 0;
@@ -292,12 +330,12 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
         </em>
       );
     }
-    const cur = LESSON_STEPS[step];
+    const cur = lessonSteps[step];
     if (cur?.html) {
       return <MathContent html={cur.html} />;
     }
     return cur?.jsx ?? null;
-  }, [reactionMsg, sketchOn, socraticMsg, step]);
+  }, [lessonSteps, reactionMsg, sketchOn, socraticMsg, step]);
 
   const captionWho = useMemo(() => {
     if (qaOpen || voiceOpen) return 'paused';
@@ -326,7 +364,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
               <em>{topic.unit}</em> {topic.title}
             </div>
             <div className="cr-dots">
-              {LESSON_STEPS.slice(1).map((_, i) => {
+              {lessonSteps.slice(1).map((_, i) => {
                 const idx = i + 1;
                 const cls = step === idx ? 'active' : step > idx ? 'done' : '';
                 return (
@@ -565,8 +603,10 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
             <div className="live">Teaching live</div>
           </div>
           <div className="cr-outline">
-            <div className="cr-outline-ttl">Wave Properties · 8 steps</div>
-            {LESSON_STEPS.slice(1).map((s, i) => {
+            <div className="cr-outline-ttl">
+              {topic.title} · {lessonSteps.length - 1} steps
+            </div>
+            {lessonSteps.slice(1).map((s, i) => {
               const idx = i + 1;
               const cls = step === idx ? 'active' : step > idx ? 'done' : '';
               return (
@@ -581,7 +621,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
                     {step > idx ? <Icon name="check" size={11} /> : idx}
                   </div>
                   <div className="cr-step-body">
-                    <div className="cr-step-ttl">{STEP_TITLES[idx]}</div>
+                    <div className="cr-step-ttl">{stepTitles[idx]}</div>
                     <div className="cr-step-time">{s.dur}</div>
                   </div>
                 </div>
