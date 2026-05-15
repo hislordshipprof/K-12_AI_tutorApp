@@ -1,4 +1,4 @@
-import { MathContent } from '@/components/aria/math-content';
+import { TimedReveal } from '@/components/aria/timed-reveal';
 import { cn } from '@/lib/utils';
 
 interface WhiteboardSVGProps {
@@ -25,6 +25,11 @@ interface WhiteboardSVGProps {
   stepTts?: string;
   /** Topic title for the watermark on generic chalkboard. */
   topicTitle?: string;
+  /**
+   * 0→1 TTS playback progress. When set, the generic chalkboard headline
+   * "writes itself" word-by-word in sync with Aria's voice (Phase A).
+   */
+  revealProgress?: number;
 }
 
 const WAVE_D =
@@ -66,6 +71,7 @@ export function WhiteboardSVG({
   stepHtml,
   stepTts,
   topicTitle,
+  revealProgress = 1,
 }: WhiteboardSVGProps) {
   return (
     <svg
@@ -106,6 +112,7 @@ export function WhiteboardSVG({
           stepHtml={stepHtml}
           stepTts={stepTts}
           topicTitle={topicTitle}
+          revealProgress={revealProgress}
         />
       ) : (
         <WavesScene step={step} />
@@ -120,11 +127,13 @@ function GenericChalkboard({
   stepHtml,
   stepTts,
   topicTitle,
+  revealProgress,
 }: {
   step: number;
   stepHtml?: string;
   stepTts?: string;
   topicTitle?: string;
+  revealProgress: number;
 }) {
   const headline = extractHeadline(stepHtml ?? '', stepTts ?? '');
   const stepLabel = step === 0 ? 'Preparing…' : `Step ${step}`;
@@ -184,7 +193,7 @@ function GenericChalkboard({
             padding: '0 20px',
           }}
         >
-          <MathContent html={headline || '…'} />
+          <TimedReveal html={headline || '…'} progress={revealProgress} />
         </div>
       </foreignObject>
 

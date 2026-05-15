@@ -74,6 +74,12 @@ export interface UseTtsPlaybackResult {
   speak: (text: string) => void;
   stop: () => void;
   speaking: boolean;
+  /**
+   * Playback progress 0→1 for the current utterance, updated continuously
+   * while audio plays. Drives the word-timed "writing as she speaks"
+   * reveal in the classroom (Phase A). Resets to 0 on flush / new start.
+   */
+  progress: number;
 }
 
 /**
@@ -133,6 +139,9 @@ export function useTtsPlayback({
   onProgress,
 }: UseTtsPlaybackArgs): UseTtsPlaybackResult {
   const [speaking, setSpeaking] = useState(false);
+  // 0→1 playback progress for the current utterance. Components subscribe
+  // to this to drive the word-timed reveal animation.
+  const [progress, setProgress] = useState(0);
 
   // Mutable refs so callbacks don't churn on every prop change.
   const mutedRef = useRef(muted);
@@ -306,6 +315,7 @@ export function useTtsPlayback({
     pausedRef.current = false;
     stopProgressTimer();
     setSpeaking(false);
+    setProgress(0);
   }, [releaseAudio, stopProgressTimer]);
 
   /**
@@ -349,10 +359,18 @@ export function useTtsPlayback({
           setSpeaking(true);
           startProgressTimer(localOnProgress);
         };
+        // speechSynthesis has no media clock — approximate progress from
+        // the boundary event's charIndex over the utterance length.
+        u.onboundary = (e: SpeechSynthesisEvent) => {
+          if (effectiveText.length > 0) {
+            setProgress(Math.min(1, e.charIndex / effectiveText.length));
+          }
+        };
         u.onend = () => {
           accumulatedMsRef.current = elapsedMs();
           startedAtRef.current = 0;
           setSpeaking(false);
+          setProgress(1);
           stopProgressTimer();
         };
         u.onerror = () => {
@@ -379,6 +397,9 @@ export function useTtsPlayback({
     ({ text, startMs = 0, onProgress: localOnProgress }: StartArgs) => {
       if (mutedRef.current) return;
       if (!text.trim()) return;
+
+      // Reset reveal progress for the new utterance.
+      setProgress(0);
 
       // Clean slate before kicking a new utterance.
       if (ttsAbortRef.current) {
@@ -441,6 +462,13 @@ export function useTtsPlayback({
             setSpeaking(true);
             startProgressTimer(localOnProgress);
           };
+          // Sample-accurate progress straight off the media clock —
+          // drives the word-timed reveal in the classroom.
+          audio.ontimeupdate = () => {
+            if (Number.isFinite(audio.duration) && audio.duration > 0) {
+              setProgress(Math.min(1, audio.currentTime / audio.duration));
+            }
+          };
           audio.onpause = () => {
             accumulatedMsRef.current = elapsedMs();
             startedAtRef.current = 0;
@@ -451,6 +479,7 @@ export function useTtsPlayback({
             accumulatedMsRef.current = elapsedMs();
             startedAtRef.current = 0;
             setSpeaking(false);
+            setProgress(1);
             stopProgressTimer();
             releaseAudio();
           };
@@ -625,5 +654,6 @@ export function useTtsPlayback({
     speak,
     stop,
     speaking,
+    progress,
   };
 }

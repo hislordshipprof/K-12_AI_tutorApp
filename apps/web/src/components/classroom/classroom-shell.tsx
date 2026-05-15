@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 
 import { AriaMascot } from '@/components/aria/aria-mascot';
 import { Icon } from '@/components/aria/icon';
-import { MathContent } from '@/components/aria/math-content';
+import { TimedReveal } from '@/components/aria/timed-reveal';
 import { CaptionBar } from '@/components/classroom/caption-bar';
 import { PeerPresence } from '@/components/classroom/peer-presence';
 import { QAOverlay } from '@/components/classroom/qa-overlay';
@@ -333,6 +333,12 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
     [recognition, sessionId],
   );
 
+  // Word-reveal progress for the caption + chalkboard. When the lesson is
+  // muted or paused there's no audio clock to sync to, so we show the
+  // content fully revealed; while playing unmuted it tracks the TTS
+  // audio progress so words "write themselves" as Aria speaks.
+  const captionProgress = muted || !playing ? 1 : tts.progress;
+
   // Caption resolves through reaction → sketch → step content.
   const captionJsx = useMemo<ReactNode>(() => {
     if (reactionMsg) {
@@ -353,10 +359,13 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
     }
     const cur = lessonSteps[step];
     if (cur?.html) {
-      return <MathContent html={cur.html} />;
+      // TimedReveal writes the caption word-by-word in sync with the TTS
+      // audio clock (tts.progress). When paused / not playing it shows
+      // fully revealed (progress defaults toward 1 once audio ends).
+      return <TimedReveal html={cur.html} progress={captionProgress} />;
     }
     return cur?.jsx ?? null;
-  }, [lessonSteps, reactionMsg, sketchOn, socraticMsg, step]);
+  }, [lessonSteps, reactionMsg, sketchOn, socraticMsg, step, captionProgress]);
 
   const captionWho = useMemo(() => {
     if (qaOpen || voiceOpen) return 'paused';
@@ -471,6 +480,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
             stepHtml={lessonSteps[step]?.html}
             stepTts={lessonSteps[step]?.tts}
             topicTitle={topic.title}
+            revealProgress={captionProgress}
           />
         </div>
 
