@@ -1,0 +1,212 @@
+# AP CED → OpenStax section map
+# ---------------------------------------------------------------------------
+# Keys are topic slugs in the form `<course-slug>.unit-<N>.<topic-slug>`.
+# Values list OpenStax book section URLs. The extractor resolves each URL to
+# a fetchable page via `sources.py`.
+#
+# IMPORTANT: every entry MUST be a *full section slug* (e.g.
+# ``16-1-hookes-law-stress-and-strain-revisited``) — bare chapter anchors
+# like ``ch-16`` do NOT resolve to an OpenStax reader page. The B1 work
+# stored half-anchors (``16-1``); B3 replaced them with the live slugs
+# below, verified against the OpenStax 2026 reader.
+#
+# Books used (all CC BY 4.0):
+#   - openstax/college-physics-2e  →  AP Physics 1
+#   - openstax/calculus-volume-1   →  AP Calc BC (limits, derivatives, integrals)
+#   - openstax/calculus-volume-2   →  AP Calc BC (integration techniques, series)
+#   - openstax/biology-2e          →  AP Biology
+#
+# Data, not code — curriculum updates don't require redeploys. B2's generator
+# reads this file at runtime.
+
+# ─── AP Physics 1 (2024 CED, 8 units) ────────────────────────────────────────
+ap-physics-1.unit-1.kinematics:
+  - openstax/college-physics-2e/ch-2/2-1-displacement
+  - openstax/college-physics-2e/ch-2/2-3-time-velocity-and-speed
+  - openstax/college-physics-2e/ch-2/2-4-acceleration
+  - openstax/college-physics-2e/ch-2/2-5-motion-equations-for-constant-acceleration-in-one-dimension
+  - openstax/college-physics-2e/ch-3/3-1-kinematics-in-two-dimensions-an-introduction
+  - openstax/college-physics-2e/ch-3/3-4-projectile-motion
+
+ap-physics-1.unit-2.force-translational-dynamics:
+  - openstax/college-physics-2e/ch-4/4-2-newtons-first-law-of-motion-inertia
+  - openstax/college-physics-2e/ch-4/4-3-newtons-second-law-of-motion-concept-of-a-system
+  - openstax/college-physics-2e/ch-4/4-4-newtons-third-law-of-motion-symmetry-in-forces
+  - openstax/college-physics-2e/ch-4/4-5-normal-tension-and-other-examples-of-forces
+  - openstax/college-physics-2e/ch-5/5-1-friction
+
+ap-physics-1.unit-3.work-energy-power:
+  - openstax/college-physics-2e/ch-7/7-1-work-the-scientific-definition
+  - openstax/college-physics-2e/ch-7/7-2-kinetic-energy-and-the-work-energy-theorem
+  - openstax/college-physics-2e/ch-7/7-3-gravitational-potential-energy
+  - openstax/college-physics-2e/ch-7/7-6-conservation-of-energy
+  - openstax/college-physics-2e/ch-7/7-7-power
+
+ap-physics-1.unit-4.linear-momentum:
+  - openstax/college-physics-2e/ch-8/8-1-linear-momentum-and-force
+  - openstax/college-physics-2e/ch-8/8-2-impulse
+  - openstax/college-physics-2e/ch-8/8-3-conservation-of-momentum
+  - openstax/college-physics-2e/ch-8/8-4-elastic-collisions-in-one-dimension
+  - openstax/college-physics-2e/ch-8/8-5-inelastic-collisions-in-one-dimension
+
+ap-physics-1.unit-5.torque-rotational-dynamics:
+  - openstax/college-physics-2e/ch-9/9-1-the-first-condition-for-equilibrium
+  - openstax/college-physics-2e/ch-9/9-2-the-second-condition-for-equilibrium
+  - openstax/college-physics-2e/ch-10/10-1-angular-acceleration
+  - openstax/college-physics-2e/ch-10/10-2-kinematics-of-rotational-motion
+  - openstax/college-physics-2e/ch-10/10-3-dynamics-of-rotational-motion-rotational-inertia
+
+ap-physics-1.unit-6.energy-momentum-rotating-systems:
+  - openstax/college-physics-2e/ch-10/10-4-rotational-kinetic-energy-work-and-energy-revisited
+  - openstax/college-physics-2e/ch-10/10-5-angular-momentum-and-its-conservation
+  - openstax/college-physics-2e/ch-10/10-6-collisions-of-extended-bodies-in-two-dimensions
+
+ap-physics-1.unit-7.oscillations:
+  - openstax/college-physics-2e/ch-16/16-1-hookes-law-stress-and-strain-revisited
+  - openstax/college-physics-2e/ch-16/16-2-period-and-frequency-in-oscillations
+  - openstax/college-physics-2e/ch-16/16-3-simple-harmonic-motion-a-special-periodic-motion
+
+ap-physics-1.unit-8.fluids:
+  - openstax/college-physics-2e/ch-11/11-1-what-is-a-fluid
+  - openstax/college-physics-2e/ch-11/11-2-density
+  - openstax/college-physics-2e/ch-11/11-3-pressure
+  - openstax/college-physics-2e/ch-11/11-4-variation-of-pressure-with-depth-in-a-fluid
+  - openstax/college-physics-2e/ch-11/11-7-archimedes-principle
+  - openstax/college-physics-2e/ch-12/12-1-flow-rate-and-its-relation-to-velocity
+  - openstax/college-physics-2e/ch-12/12-2-bernoullis-equation
+
+# ─── AP Calculus BC (2024 CED, 10 units) ─────────────────────────────────────
+ap-calc-bc.unit-1.limits-continuity:
+  - openstax/calculus-volume-1/ch-2/2-1-a-preview-of-calculus
+  - openstax/calculus-volume-1/ch-2/2-2-the-limit-of-a-function
+  - openstax/calculus-volume-1/ch-2/2-3-the-limit-laws
+  - openstax/calculus-volume-1/ch-2/2-4-continuity
+
+ap-calc-bc.unit-2.differentiation-definition-properties:
+  - openstax/calculus-volume-1/ch-3/3-1-defining-the-derivative
+  - openstax/calculus-volume-1/ch-3/3-2-the-derivative-as-a-function
+  - openstax/calculus-volume-1/ch-3/3-3-differentiation-rules
+  - openstax/calculus-volume-1/ch-3/3-4-derivatives-as-rates-of-change
+
+ap-calc-bc.unit-3.differentiation-composite-implicit-inverse:
+  - openstax/calculus-volume-1/ch-3/3-5-derivatives-of-trigonometric-functions
+  - openstax/calculus-volume-1/ch-3/3-6-the-chain-rule
+  - openstax/calculus-volume-1/ch-3/3-7-derivatives-of-inverse-functions
+  - openstax/calculus-volume-1/ch-3/3-8-implicit-differentiation
+  - openstax/calculus-volume-1/ch-3/3-9-derivatives-of-exponential-and-logarithmic-functions
+
+ap-calc-bc.unit-4.contextual-applications-differentiation:
+  - openstax/calculus-volume-1/ch-4/4-1-related-rates
+  - openstax/calculus-volume-1/ch-4/4-2-linear-approximations-and-differentials
+  - openstax/calculus-volume-1/ch-4/4-8-lhopitals-rule
+
+ap-calc-bc.unit-5.analytical-applications-differentiation:
+  - openstax/calculus-volume-1/ch-4/4-3-maxima-and-minima
+  - openstax/calculus-volume-1/ch-4/4-4-the-mean-value-theorem
+  - openstax/calculus-volume-1/ch-4/4-5-derivatives-and-the-shape-of-a-graph
+  - openstax/calculus-volume-1/ch-4/4-6-limits-at-infinity-and-asymptotes
+  - openstax/calculus-volume-1/ch-4/4-7-applied-optimization-problems
+
+ap-calc-bc.unit-6.integration-accumulation-change:
+  - openstax/calculus-volume-1/ch-5/5-1-approximating-areas
+  - openstax/calculus-volume-1/ch-5/5-2-the-definite-integral
+  - openstax/calculus-volume-1/ch-5/5-3-the-fundamental-theorem-of-calculus
+  - openstax/calculus-volume-1/ch-5/5-4-integration-formulas-and-the-net-change-theorem
+  - openstax/calculus-volume-1/ch-5/5-5-substitution
+
+ap-calc-bc.unit-7.differential-equations:
+  - openstax/calculus-volume-2/ch-4/4-1-basics-of-differential-equations
+  - openstax/calculus-volume-2/ch-4/4-2-direction-fields-and-numerical-methods
+  - openstax/calculus-volume-2/ch-4/4-3-separable-equations
+  - openstax/calculus-volume-2/ch-4/4-4-the-logistic-equation
+  - openstax/calculus-volume-2/ch-4/4-5-first-order-linear-equations
+
+ap-calc-bc.unit-8.applications-integration:
+  - openstax/calculus-volume-2/ch-2/2-1-areas-between-curves
+  - openstax/calculus-volume-2/ch-2/2-2-determining-volumes-by-slicing
+  - openstax/calculus-volume-2/ch-2/2-3-volumes-of-revolution-cylindrical-shells
+  - openstax/calculus-volume-2/ch-2/2-4-arc-length-of-a-curve-and-surface-area
+  - openstax/calculus-volume-2/ch-2/2-5-physical-applications
+
+ap-calc-bc.unit-9.parametric-polar-vector-functions:
+  - openstax/calculus-volume-2/ch-7/7-1-parametric-equations
+  - openstax/calculus-volume-2/ch-7/7-2-calculus-of-parametric-curves
+  - openstax/calculus-volume-2/ch-7/7-3-polar-coordinates
+  - openstax/calculus-volume-2/ch-7/7-4-area-and-arc-length-in-polar-coordinates
+
+ap-calc-bc.unit-10.infinite-sequences-series:
+  - openstax/calculus-volume-2/ch-5/5-1-sequences
+  - openstax/calculus-volume-2/ch-5/5-2-infinite-series
+  - openstax/calculus-volume-2/ch-5/5-3-the-divergence-and-integral-tests
+  - openstax/calculus-volume-2/ch-5/5-6-ratio-and-root-tests
+  - openstax/calculus-volume-2/ch-6/6-1-power-series-and-functions
+  - openstax/calculus-volume-2/ch-6/6-3-taylor-and-maclaurin-series
+
+# ─── AP Biology (2024 CED, 8 units) ──────────────────────────────────────────
+ap-biology.unit-1.chemistry-of-life:
+  - openstax/biology-2e/ch-2/2-1-atoms-isotopes-ions-and-molecules-the-building-blocks
+  - openstax/biology-2e/ch-2/2-2-water
+  - openstax/biology-2e/ch-2/2-3-carbon
+  - openstax/biology-2e/ch-3/3-1-synthesis-of-biological-macromolecules
+  - openstax/biology-2e/ch-3/3-2-carbohydrates
+  - openstax/biology-2e/ch-3/3-3-lipids
+  - openstax/biology-2e/ch-3/3-4-proteins
+  - openstax/biology-2e/ch-3/3-5-nucleic-acids
+
+ap-biology.unit-2.cell-structure-function:
+  - openstax/biology-2e/ch-4/4-1-studying-cells
+  - openstax/biology-2e/ch-4/4-2-prokaryotic-cells
+  - openstax/biology-2e/ch-4/4-3-eukaryotic-cells
+  - openstax/biology-2e/ch-4/4-4-the-endomembrane-system-and-proteins
+  - openstax/biology-2e/ch-5/5-1-components-and-structure
+  - openstax/biology-2e/ch-5/5-2-passive-transport
+  - openstax/biology-2e/ch-5/5-3-active-transport
+
+ap-biology.unit-3.cellular-energetics:
+  - openstax/biology-2e/ch-7/7-1-energy-in-living-systems
+  - openstax/biology-2e/ch-7/7-2-glycolysis
+  - openstax/biology-2e/ch-7/7-3-oxidation-of-pyruvate-and-the-citric-acid-cycle
+  - openstax/biology-2e/ch-7/7-4-oxidative-phosphorylation
+  - openstax/biology-2e/ch-8/8-1-overview-of-photosynthesis
+  - openstax/biology-2e/ch-8/8-2-the-light-dependent-reactions-of-photosynthesis
+  - openstax/biology-2e/ch-8/8-3-using-light-energy-to-make-organic-molecules
+
+ap-biology.unit-4.cell-communication-cycle:
+  - openstax/biology-2e/ch-9/9-1-signaling-molecules-and-cellular-receptors
+  - openstax/biology-2e/ch-9/9-2-propagation-of-the-signal
+  - openstax/biology-2e/ch-9/9-3-response-to-the-signal
+  - openstax/biology-2e/ch-10/10-1-cell-division
+  - openstax/biology-2e/ch-10/10-2-the-cell-cycle
+  - openstax/biology-2e/ch-10/10-3-control-of-the-cell-cycle
+
+ap-biology.unit-5.heredity:
+  - openstax/biology-2e/ch-12/12-1-mendels-experiments-and-the-laws-of-probability
+  - openstax/biology-2e/ch-12/12-2-characteristics-and-traits
+  - openstax/biology-2e/ch-12/12-3-laws-of-inheritance
+  - openstax/biology-2e/ch-13/13-1-chromosomal-theory-and-genetic-linkage
+  - openstax/biology-2e/ch-13/13-2-chromosomal-basis-of-inherited-disorders
+
+ap-biology.unit-6.gene-expression-regulation:
+  - openstax/biology-2e/ch-15/15-1-the-genetic-code
+  - openstax/biology-2e/ch-15/15-2-prokaryotic-transcription
+  - openstax/biology-2e/ch-15/15-3-eukaryotic-transcription
+  - openstax/biology-2e/ch-15/15-5-ribosomes-and-protein-synthesis
+  - openstax/biology-2e/ch-16/16-1-regulation-of-gene-expression
+  - openstax/biology-2e/ch-16/16-2-prokaryotic-gene-regulation
+  - openstax/biology-2e/ch-16/16-4-eukaryotic-transcription-gene-regulation
+
+ap-biology.unit-7.natural-selection:
+  - openstax/biology-2e/ch-18/18-1-understanding-evolution
+  - openstax/biology-2e/ch-18/18-2-formation-of-new-species
+  - openstax/biology-2e/ch-19/19-1-population-evolution
+  - openstax/biology-2e/ch-19/19-2-population-genetics
+  - openstax/biology-2e/ch-19/19-3-adaptive-evolution
+
+ap-biology.unit-8.ecology:
+  - openstax/biology-2e/ch-44/44-1-the-scope-of-ecology
+  - openstax/biology-2e/ch-44/44-2-biogeography
+  - openstax/biology-2e/ch-44/44-3-terrestrial-biomes
+  - openstax/biology-2e/ch-45/45-1-population-demography
+  - openstax/biology-2e/ch-45/45-3-environmental-limits-to-population-growth
+  - openstax/biology-2e/ch-45/45-4-population-dynamics-and-regulation
+  - openstax/biology-2e/ch-45/45-6-community-ecology
