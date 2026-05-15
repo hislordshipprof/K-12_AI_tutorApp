@@ -24,6 +24,7 @@ from uuid import UUID
 
 from app.agents.socratic import SocraticAgent
 from app.agents.state import QATurn, SessionState
+from app.content import retriever as rag_retriever
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.gemini import GeminiService, get_gemini
@@ -185,6 +186,35 @@ class TutorAgent:
                 error=str(e),
             )
 
+    # ── retrieval ────────────────────────────────────────────────────────
+    async def _fetch_rag_context(
+        self, state: SessionState, query: str
+    ) -> list[Any]:
+        """Pull retrieval context for ``query`` against ``state.topic_id``.
+
+        Wraps ``retriever.fetch_context`` so the TutorAgent can:
+          * Hand the same Supabase client we already hold to the retriever
+            (no re-construction work per request).
+          * Swallow any error here so a retrieval blow-up never breaks a
+            live Q&A — ``socratic.respond_to_*`` handles an empty list.
+        """
+        if not state.topic_id:
+            return []
+        try:
+            return await rag_retriever.fetch_context(
+                topic_id=state.topic_id,
+                question=query,
+                last_step_idx=state.step_idx,
+                supabase=self.supabase,
+            )
+        except Exception as e:  # noqa: BLE001 — defensive catch-all
+            log.warning(
+                "tutor_rag_fetch_failed",
+                topic_id=state.topic_id,
+                error=str(e),
+            )
+            return []
+
     # ── event handlers ───────────────────────────────────────────────────
     async def handle_question(
         self,
@@ -196,12 +226,21 @@ class TutorAgent:
     ) -> AsyncGenerator[str, None]:
         """Stream Aria's Socratic response to a free-form question.
 
+        B3: before calling the Socratic agent we fetch RAG context from the
+        per-chunk ``lesson_embeddings`` index for the current topic. The
+        retriever returns ``[]`` (and logs a warning) on any failure, so the
+        downstream call gracefully falls back to the non-RAG prompt path.
+
         Records the full transcript turn after streaming completes.
         """
         state = await self.get_or_init_state(session_id, user_id, topic_id=topic_id)
 
+        retrieved = await self._fetch_rag_context(state, question)
+
         collected: list[str] = []
-        async for token in self.socratic.respond_to_question(state, question):
+        async for token in self.socratic.respond_to_question(
+            state, question, retrieved_chunks=retrieved
+        ):
             collected.append(token)
             yield token
 
@@ -222,11 +261,19 @@ class TutorAgent:
         text: str,
         topic_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
-        """Stream Aria's Socratic response to a typed student reply."""
+        """Stream Aria's Socratic response to a typed student reply.
+
+        Like ``handle_question``, we fetch RAG context so reply nudges are
+        grounded in the same source passages the student just heard.
+        """
         state = await self.get_or_init_state(session_id, user_id, topic_id=topic_id)
 
+        retrieved = await self._fetch_rag_context(state, text)
+
         collected: list[str] = []
-        async for token in self.socratic.respond_to_reply(state, text):
+        async for token in self.socratic.respond_to_reply(
+            state, text, retrieved_chunks=retrieved
+        ):
             collected.append(token)
             yield token
 

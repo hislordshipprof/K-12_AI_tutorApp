@@ -94,6 +94,20 @@ def test_socratic_rules_forbid_direct_answer() -> None:
     assert "Ask before telling" in SOCRATIC_RULES
 
 
+def test_socratic_rules_require_latex_math_formatting() -> None:
+    """Aria must emit math in $...$ / $$...$$ so KaTeX can typeset it.
+
+    Without this rule the model defaults to bare ASCII ('T = 1/f') which
+    renders as plain text and looks unprofessional in a tutoring app.
+    """
+    assert "MATH FORMATTING" in SOCRATIC_RULES
+    assert "$T = 1/f$" in SOCRATIC_RULES
+    assert "$$" in SOCRATIC_RULES
+    # The rules MUST forbid bare ASCII to keep the rendering layer
+    # consistent across lesson content and Aria's live Q&A replies.
+    assert "Do NOT emit bare ASCII math" in SOCRATIC_RULES
+
+
 # ── streaming methods ────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_respond_to_question_streams_and_uses_persona() -> None:

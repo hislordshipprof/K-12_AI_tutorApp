@@ -45,7 +45,17 @@ SOCRATIC_RULES = (
     "6. When the student is stuck, give the smallest useful nudge — a hint, "
     "an analogy, or a more specific question. Never the whole answer.\n"
     "7. End with a question or an invitation to try something — keep the "
-    "ball in the student's court."
+    "ball in the student's court.\n"
+    "8. MATH FORMATTING — every equation, variable, or numeric expression "
+    "MUST be wrapped in LaTeX delimiters so the frontend can typeset it. "
+    "Use $...$ for inline math and $$...$$ for display math. Examples:\n"
+    "   • inline: 'the period is $T = 1/f$'\n"
+    "   • display: '$$T = 2\\\\pi \\\\sqrt{m/k}$$'\n"
+    "   • single variables: $v$, $\\\\lambda$, $\\\\omega$\n"
+    "   Do NOT emit bare ASCII math like 'T = 1/f'. Do NOT use loose "
+    "Unicode math symbols (no '√', '²', 'π' on their own) — use LaTeX "
+    "commands inside delimiters (\\\\sqrt, ^2, \\\\pi). The renderer is "
+    "KaTeX; stay within its supported subset."
 )
 
 
