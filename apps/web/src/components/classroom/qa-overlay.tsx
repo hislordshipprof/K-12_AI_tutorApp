@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AriaMascot } from '@/components/aria/aria-mascot';
 import { Icon } from '@/components/aria/icon';
+import { MathContent } from '@/components/aria/math-content';
 import { QAAnswerSVG, type QATopic } from '@/components/classroom/qa-answer-svg';
 import { streamSSE } from '@/lib/sse';
 import { cn } from '@/lib/utils';
@@ -54,6 +55,30 @@ export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayPro
   const [answer, setAnswer] = useState('');
   const [streaming, setStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  /**
+   * Debounce timer for the "type-to-cancel" UX. When the student edits the
+   * textarea while a stream is in-flight, we wait 150ms of quiet before
+   * aborting — that way a single accidental keystroke doesn't nuke the
+   * answer, but deliberate typing of a follow-up does. See
+   * docs/interruption-architecture.md § Modality 3.
+   */
+  const autoAbortTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Latest value of `streaming` — read inside ref'd callbacks without re-binding. */
+  const streamingRef = useRef(streaming);
+  useEffect(() => {
+    streamingRef.current = streaming;
+  }, [streaming]);
+
+  /** Hard abort: cancel in-flight stream + reset the streaming flag. */
+  const stopStreaming = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreaming(false);
+    if (autoAbortTimerRef.current) {
+      clearTimeout(autoAbortTimerRef.current);
+      autoAbortTimerRef.current = null;
+    }
+  }, []);
 
   // Reset state whenever overlay opens/closes.
   useEffect(() => {
@@ -65,8 +90,19 @@ export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayPro
       setStreaming(false);
       abortRef.current?.abort();
       abortRef.current = null;
+      if (autoAbortTimerRef.current) {
+        clearTimeout(autoAbortTimerRef.current);
+        autoAbortTimerRef.current = null;
+      }
     }
   }, [active]);
+
+  // Cleanup any pending debounce timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (autoAbortTimerRef.current) clearTimeout(autoAbortTimerRef.current);
+    };
+  }, []);
 
   // Auto-ask when launched via voice with an initial question.
   useEffect(() => {
@@ -146,9 +182,45 @@ export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayPro
           <div className="qa-aria-hd">
             <AriaMascot size={28} speaking={streaming} />
             <span className="name">Prof. Aria · answering</span>
+            {streaming && (
+              // Visible only while a stream is in flight. Aborts the SSE
+              // and keeps the overlay open so the student can immediately
+              // type a follow-up. See docs § Modality 3.
+              <button
+                type="button"
+                className="qa-stop"
+                onClick={stopStreaming}
+                aria-label="Stop generating"
+                style={{
+                  marginLeft: 'auto',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: 'rgba(255,255,255,.9)',
+                  background: 'rgba(255,255,255,.08)',
+                  border: '1px solid rgba(255,255,255,.18)',
+                  borderRadius: 999,
+                  cursor: 'pointer',
+                }}
+              >
+                <Icon name="close" size={12} /> Stop
+              </button>
+            )}
           </div>
           <div className="qa-aria-txt">
-            {answer || (streaming ? <em>Thinking…</em> : <em>Ready when you are.</em>)}
+            {answer ? (
+              // Aria's responses contain LaTeX-delimited math per the
+              // SOCRATIC_RULES persona prompt — render through KaTeX so
+              // $T = 1/f$ etc. typeset properly instead of leaking the $.
+              <MathContent html={answer} />
+            ) : streaming ? (
+              <em>Thinking…</em>
+            ) : (
+              <em>Ready when you are.</em>
+            )}
           </div>
         </div>
       )}
@@ -171,7 +243,20 @@ export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayPro
               placeholder="Ask Prof. Aria anything…"
               rows={1}
               value={q}
-              onChange={(e) => setQ(e.target.value)}
+              onChange={(e) => {
+                setQ(e.target.value);
+                // Auto-abort: if a stream is still in-flight when the
+                // student starts typing a follow-up, debounce-cancel it
+                // after 150 ms of typing. Lets the user correct mid-answer
+                // without explicitly clicking Stop.
+                if (streamingRef.current) {
+                  if (autoAbortTimerRef.current) clearTimeout(autoAbortTimerRef.current);
+                  autoAbortTimerRef.current = setTimeout(() => {
+                    autoAbortTimerRef.current = null;
+                    if (streamingRef.current) stopStreaming();
+                  }, 150);
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey && q.trim()) {
                   e.preventDefault();

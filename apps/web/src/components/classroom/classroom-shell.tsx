@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 
 import { AriaMascot } from '@/components/aria/aria-mascot';
 import { Icon } from '@/components/aria/icon';
+import { MathContent } from '@/components/aria/math-content';
 import { CaptionBar } from '@/components/classroom/caption-bar';
 import { PeerPresence } from '@/components/classroom/peer-presence';
 import { QAOverlay } from '@/components/classroom/qa-overlay';
@@ -26,12 +27,30 @@ import {
   useSocraticAria,
   type RecognizedShape,
 } from '@/hooks/use-socratic-aria';
-import { useSpeak } from '@/hooks/use-speak';
+import { useTtsPlayback } from '@/hooks/use-tts-playback';
 import { api } from '@/lib/api';
 
+/**
+ * Step-level resume bookmark used when an overlay (Q&A, voice, sketch,
+ * quiz-me) interrupts the lesson. Per `docs/interruption-architecture.md`
+ * § Modality 2 — we snapshot where Aria was so we can pick up mid-sentence
+ * on "Got it · Resume".
+ */
+interface TtsBookmark {
+  stepIndex: number;
+  audioOffsetMs: number;
+}
+
 interface LessonStep {
-  /** Caption JSX with highlighted spans. */
-  jsx: ReactNode;
+  /** Caption JSX with highlighted spans. Used when the step has no math. */
+  jsx?: ReactNode;
+  /**
+   * Mixed HTML + LaTeX math for the caption. When set, this takes precedence
+   * over `jsx` and is rendered through `<MathContent>` so $...$ / $$...$$
+   * delimiters typeset via KaTeX. Future steps populated by the content
+   * pipeline (B3) will use only this field.
+   */
+  html?: string;
   /** Plain-text fallback used for text-to-speech. */
   tts: string;
   /** Mock duration label shown in the outline. */
@@ -81,12 +100,7 @@ const LESSON_STEPS: LessonStep[] = [
     dur: '05:10',
   },
   {
-    jsx: (
-      <>
-        One full cycle, crest to crest, is the <span className="hl-g">wavelength</span> — that
-        lowercase λ.
-      </>
-    ),
+    html: 'One full cycle, crest to crest, is the <span class="hl-g">wavelength</span> — that lowercase $\\lambda$.',
     tts: 'One full cycle, crest to crest, is the wavelength. That lowercase lambda.',
     dur: '07:30',
   },
@@ -101,12 +115,7 @@ const LESSON_STEPS: LessonStep[] = [
     dur: '09:50',
   },
   {
-    jsx: (
-      <>
-        Put it together: <span className="hl-y">v = f · λ</span>. Speed equals frequency times
-        wavelength. That&apos;s the whole game.
-      </>
-    ),
+    html: 'Put it together: <span class="hl-y">$v = f \\cdot \\lambda$</span>. Speed equals frequency times wavelength. That\'s the whole game.',
     tts: "Put it together: v equals f times lambda. Speed equals frequency times wavelength. That's the whole game.",
     dur: '12:40',
   },
@@ -173,7 +182,20 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
   const [quizMeOpen, setQuizMeOpen] = useState(false);
 
   const total = LESSON_STEPS.length - 1;
-  const { speak, stop: stopSpeak, speaking } = useSpeak({ muted, rate: 1 });
+  const tts = useTtsPlayback({ muted, rate: 1 });
+  const { speaking } = tts;
+  /** Bookmark snapshot taken whenever an overlay interrupts playback. */
+  const [bookmark, setBookmark] = useState<TtsBookmark | null>(null);
+
+  /**
+   * Snapshot where Aria is in the current step's narration and hard-flush
+   * the playback queue. Called on every overlay open so the student can
+   * later pick up mid-sentence.
+   */
+  const snapshotAndFlush = useCallback(() => {
+    setBookmark({ stepIndex: step, audioOffsetMs: tts.getCurrentMs() });
+    tts.flush();
+  }, [step, tts]);
 
   const socraticMsg = useSocraticAria({
     active: sketchOn,
@@ -184,12 +206,19 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
     studentReply,
   });
 
-  // Speak the active step's caption when conditions allow.
+  // Speak the active step's caption when conditions allow. If we have a
+  // bookmark for this step (because an overlay just closed), resume from
+  // the captured offset instead of restarting from the top.
   useEffect(() => {
     if (!playing || qaOpen || voiceOpen || sketchOn || quizMeOpen || reactionMsg) return;
     const s = LESSON_STEPS[step];
-    if (s) speak(s.tts);
-    return () => stopSpeak();
+    if (!s) return;
+    const resumeFromMs =
+      bookmark && bookmark.stepIndex === step ? bookmark.audioOffsetMs : 0;
+    tts.start({ text: s.tts, startMs: resumeFromMs });
+    // Bookmark has been consumed — clear so subsequent step changes start fresh.
+    if (resumeFromMs > 0) setBookmark(null);
+    return () => tts.flush();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, playing, qaOpen, voiceOpen, sketchOn, quizMeOpen, muted]);
 
@@ -204,8 +233,8 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
 
   const onReact = (r: Reaction) => {
     setReactionMsg(r);
-    stopSpeak();
-    speak(r.msg);
+    tts.flush();
+    tts.start({ text: r.msg });
     setTimeout(() => setReactionMsg(null), 3200);
   };
 
@@ -263,7 +292,11 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
         </em>
       );
     }
-    return LESSON_STEPS[step]?.jsx ?? null;
+    const cur = LESSON_STEPS[step];
+    if (cur?.html) {
+      return <MathContent html={cur.html} />;
+    }
+    return cur?.jsx ?? null;
   }, [reactionMsg, sketchOn, socraticMsg, step]);
 
   const captionWho = useMemo(() => {
@@ -317,7 +350,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
               onClick={() => {
                 setSketchOn((s) => !s);
                 setPlaying(false);
-                stopSpeak();
+                snapshotAndFlush();
               }}
               title="Sketch on the board"
             >
@@ -329,7 +362,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
               onClick={() => {
                 setQuizMeOpen(true);
                 setPlaying(false);
-                stopSpeak();
+                snapshotAndFlush();
               }}
               title="Quiz me on this"
             >
@@ -449,12 +482,12 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
           onAsk={() => {
             setQaOpen(true);
             setPlaying(false);
-            stopSpeak();
+            snapshotAndFlush();
           }}
           onVoice={() => {
             setVoiceOpen(true);
             setPlaying(false);
-            stopSpeak();
+            snapshotAndFlush();
           }}
         />
 
@@ -464,8 +497,24 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
         {/* VOICE MODE OVERLAY */}
         <VoiceMode
           active={voiceOpen}
+          sessionId={sessionId}
+          topic={topic.slug}
+          // Server-streamed Aria audio (24 kHz Float32 PCM) is currently
+          // dropped on the floor: `useTtsPlayback` still wraps
+          // speechSynthesis (see A2's notes). When the playback worklet
+          // takes over we'll forward each chunk via
+          // `tts.pushAudio?.(samples)` here.
+          // onAudioChunk={...}
+          onInterrupted={() => {
+            // Critical barge-in handling — drop any buffered Aria audio
+            // immediately so the model's mid-sentence yield is audible.
+            tts.flush();
+          }}
           onCancel={() => {
             setVoiceOpen(false);
+            // Lesson playback resumes via the step `useEffect`, which
+            // re-runs when `voiceOpen` flips false and re-issues tts.start
+            // with the bookmark offset captured by `snapshotAndFlush`.
             setPlaying(true);
           }}
           onSubmit={(text) => {
