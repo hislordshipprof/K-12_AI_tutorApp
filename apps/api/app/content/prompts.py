@@ -44,7 +44,14 @@ LESSON_GENERATION_SYSTEM_PROMPT = (
     "   • single variables: $v$, $\\lambda$, $\\omega$\n"
     "Do NOT emit bare ASCII math like 'T = 1/f' outside delimiters. Do NOT "
     "use loose Unicode math symbols (no bare 'π', '√', '²'); use LaTeX "
-    "commands inside delimiters ($\\pi$, $\\sqrt{}$, $^2$)."
+    "commands inside delimiters ($\\pi$, $\\sqrt{}$, $^2$).\n\n"
+    "SUBSCRIPTS — when a variable has a subscript, use the LaTeX underscore "
+    "syntax so KaTeX typesets it as a real subscript. Bare-glued numbers/"
+    "letters render as plain side-by-side characters which looks broken.\n"
+    "   • RIGHT: $x_0$, $x_f$, $v_0$, $T_0$, $m_1$, $a_{net}$, $E_k$\n"
+    "   • WRONG: $x0$, $xf$, $v0$, $T0$, $m1$, $anet$, $Ek$\n"
+    "Multi-character subscripts MUST use braces: $a_{\\text{net}}$ or "
+    "$x_{\\text{final}}$. Numeric subscripts can omit the braces ($x_0$)."
 )
 
 

@@ -105,16 +105,39 @@ def _normalise_equation(eq: str) -> str:
     We strip spaces and lower-case so substring matching is robust to
     incidental whitespace; full unicode↔latex equivalence is out of scope
     (the model only sees the latex spec in the prompt — it should match).
+
+    Also normalises subscript syntax — OpenStax extraction produces bare
+    `x0` / `xf` (no underscore) but our LaTeX prompt now mandates `$x_0$`
+    / `$x_f$`. We strip underscores from BOTH the source token and the
+    haystack at comparison time, plus any surrounding `\\text{...}` so
+    `\\,\\text{m}` doesn't mask a unit match. Result: model output with
+    proper subscripts still scores as covering the source equation.
     """
-    return _strip_spaces(eq).lower()
+    s = _strip_spaces(eq).lower()
+    s = s.replace("_", "")
+    # Drop LaTeX text-wrapping (e.g. `\text{m}` → `m`).
+    s = s.replace("\\text{", "").replace("\\,", "").replace("\\;", "")
+    # Drop trailing braces from \\text{X} stripping.
+    s = s.replace("}", "")
+    return s
 
 
 def _all_text(content: LessonContent) -> str:
     return " ".join(s.tts + " " + s.html for s in content.items)
 
 
+def _normalise_haystack(s: str) -> str:
+    """Strip spaces + LaTeX subscript / text-wrap noise so equation matches
+    survive `$x_0$` vs `x0` and `\\text{m}` vs `m` differences."""
+    out = _strip_spaces(s).lower()
+    out = out.replace("_", "")
+    out = out.replace("\\text{", "").replace("\\,", "").replace("\\;", "")
+    out = out.replace("}", "")
+    return out
+
+
 def _all_text_flat(content: LessonContent) -> str:
-    return _strip_spaces(_all_text(content))
+    return _normalise_haystack(_all_text(content))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -179,7 +202,7 @@ def _gate_cer_triad(
             step.html
         )
         if math_blocks and norm_eqs:
-            flat_math = _strip_spaces(" ".join(math_blocks)).lower()
+            flat_math = _normalise_haystack(" ".join(math_blocks))
             if any(e in flat_math for e in norm_eqs):
                 equation_steps.add(i)
 
