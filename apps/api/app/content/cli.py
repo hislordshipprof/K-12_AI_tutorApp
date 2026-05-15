@@ -665,6 +665,164 @@ async def cmd_generate(args: argparse.Namespace) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Subcommand: quiz
+# ─────────────────────────────────────────────────────────────────────────────
+async def cmd_quiz(args: argparse.Namespace) -> int:
+    """Generate + validate + persist a 3-question quiz set for one topic.
+
+    Requires that the topic already has lesson content (`topics.content`)
+    AND ingested chunks (`lesson_embeddings`). The generator anchors
+    questions in the lesson the student saw — generating quizzes for an
+    un-taught topic gives the model nothing concrete to probe.
+    """
+    from app.content.quiz_generator import QuizGenerator
+    from app.content.quiz_persister import QuizPersister
+    from app.content.quiz_validator import (
+        VALIDATOR_VERSION as QUIZ_VALIDATOR_VERSION,
+    )
+    from app.content.quiz_validator import validate as validate_quiz
+    from app.content.schema import LessonContent
+
+    topic_slug: str = args.topic_slug
+    dry_run: bool = args.dry_run
+    log.info("content_quiz_cli_start", topic=topic_slug, dry_run=dry_run)
+
+    from app.core.supabase import get_supabase
+
+    sb = getattr(args, "_supabase", None) or get_supabase()
+    if sb is None:
+        print(
+            "[quiz] Supabase is not configured — set SUPABASE_URL + "
+            "SUPABASE_SERVICE_ROLE_KEY",
+            file=sys.stderr,
+        )
+        return 3
+
+    topic = _resolve_topic_in_supabase(topic_slug)
+    if topic is None:
+        print(
+            f"[quiz] could not find a topic row for {topic_slug!r}",
+            file=sys.stderr,
+        )
+        return 4
+    topic_id: str = topic["id"]
+
+    # Lesson content for prompt anchoring (optional but strongly preferred).
+    full_topic_q = (
+        sb.table("topics")
+        .select("id, name, content")
+        .eq("id", topic_id)
+        .limit(1)
+        .execute()
+    )
+    full_rows = full_topic_q.data or []
+    if not full_rows:
+        print(f"[quiz] topic {topic_id!r} not found", file=sys.stderr)
+        return 4
+    lesson_raw = full_rows[0].get("content")
+    lesson: LessonContent | None = None
+    if lesson_raw:
+        try:
+            lesson = LessonContent.model_validate({"items": lesson_raw})
+        except Exception as e:  # noqa: BLE001
+            log.warning("quiz_lesson_parse_failed", error=str(e))
+
+    # Source chunks for fact-checking.
+    source_chunks = _load_chunks_from_supabase(sb, topic_id, limit=8)
+    if not source_chunks:
+        print(
+            f"[quiz] no chunks for topic {topic_id!r}; run `ingest` first",
+            file=sys.stderr,
+        )
+        return 6
+
+    print(
+        f"[quiz] {topic_slug}: lesson={'yes' if lesson else 'no'} "
+        f"chunks={len(source_chunks)}",
+        file=sys.stderr,
+    )
+
+    generator = getattr(args, "_quiz_generator", None) or QuizGenerator()
+
+    parsed = None
+    report = None
+    extra_instructions: str | None = None
+    retries_used = 0
+    for attempt in range(3):
+        retries_used = attempt
+        print(
+            f"[quiz] attempt {attempt + 1}/3 — calling {generator._model} ...",
+            file=sys.stderr,
+        )
+        parsed = await generator.generate(
+            topic_name=topic["name"],
+            lesson=lesson,
+            source_chunks=source_chunks,
+            extra_instructions=extra_instructions,
+        )
+        report = validate_quiz(parsed)
+        print(
+            f"[quiz]   validator: ok={report.ok} failures={len(report.failures)}",
+            file=sys.stderr,
+        )
+        for f in report.failures:
+            print(f"      - {f}", file=sys.stderr)
+        if report.ok:
+            break
+        extra_instructions = (
+            "The previous attempt failed these validator checks:\n"
+            + "\n".join(f"  • {f}" for f in report.failures[:10])
+            + "\nFix every issue above. Re-read each correct_idx against the "
+            "lesson + source before emitting."
+        )
+
+    assert parsed is not None
+    assert report is not None
+
+    if not report.ok:
+        print(
+            "[quiz] FAILED — 3 attempts exhausted; not persisting",
+            file=sys.stderr,
+        )
+        if dry_run:
+            print(parsed.model_dump_json(indent=2))
+        return 7
+
+    if dry_run:
+        print(parsed.model_dump_json(indent=2))
+        print(
+            f"[quiz] DRY RUN — would persist topic_id={topic_id} "
+            f"(retries={retries_used})",
+            file=sys.stderr,
+        )
+        return 0
+
+    import datetime as _dt2
+
+    provenance: dict[str, Any] = {
+        "model_generate": generator._model,
+        "validator_version": QUIZ_VALIDATOR_VERSION,
+        "generated_at": _dt2.datetime.now(_dt2.timezone.utc).isoformat(),
+        "lesson_anchored": lesson is not None,
+        "chunk_ids": [c.ordinal for c in source_chunks],
+        "stage": "generated",
+    }
+
+    persister = QuizPersister(sb)
+    n = await persister.persist(
+        topic_id=topic_id,
+        quiz=parsed,
+        provenance=provenance,
+    )
+    print(
+        f"[quiz] OK — wrote {n} questions for {topic['name']!r} "
+        f"(topic_id={topic_id}, retries={retries_used})",
+        file=sys.stderr,
+    )
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Subcommand: verify
 # ─────────────────────────────────────────────────────────────────────────────
 async def cmd_verify(args: argparse.Namespace) -> int:
@@ -769,6 +927,25 @@ def build_parser() -> argparse.ArgumentParser:
         "instead of the live HTTPS fetch.",
     )
 
+    p_quiz = sub.add_parser(
+        "quiz",
+        help="Generate + validate + persist 3 quiz questions for one or more topics.",
+    )
+    g_quiz = p_quiz.add_mutually_exclusive_group(required=True)
+    g_quiz.add_argument(
+        "--topic-slug",
+        help="Single-topic run, e.g. ap-physics-1.unit-7.oscillations",
+    )
+    g_quiz.add_argument(
+        "--course",
+        help="Bulk run: 'all' or a course prefix.",
+    )
+    p_quiz.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print generated QuizSet JSON to stdout instead of writing.",
+    )
+
     p_verify = sub.add_parser("verify", help="Verify ingest state.")
     g = p_verify.add_mutually_exclusive_group()
     g.add_argument("--topic-slug")
@@ -825,7 +1002,7 @@ def main(argv: list[str] | None = None) -> int:
     # ingest cmd will fall back to get_embedder().
     args._embedder = getattr(args, "_embedder", None)
 
-    if args.command in ("ingest", "generate"):
+    if args.command in ("ingest", "generate", "quiz"):
         # Bulk vs single-topic dispatch.
         slugs = _expand_course_filter(
             getattr(args, "course", None),
@@ -838,7 +1015,13 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        cmd = cmd_ingest if args.command == "ingest" else cmd_generate
+        cmd: Any
+        if args.command == "ingest":
+            cmd = cmd_ingest
+        elif args.command == "generate":
+            cmd = cmd_generate
+        else:
+            cmd = cmd_quiz
         if len(slugs) == 1:
             args.topic_slug = slugs[0]
             return asyncio.run(cmd(args))
