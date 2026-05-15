@@ -197,6 +197,10 @@ class QuizAttemptOut(ORMModel):
     picked_idx: int | None = None
     correct: bool | None = None
     created_at: ISO
+    # Reveal fields — populated only on the response to a fresh attempt so
+    # the client can render feedback. Omitted when listing past attempts.
+    correct_idx: int | None = None
+    explanation: str | None = None
 
 
 # ── notes ────────────────────────────────────────────────────────────────────

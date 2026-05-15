@@ -205,6 +205,43 @@ async def analyze_sketch(
     vision_mod = _load_vision_module()
     agent = vision_mod.VisionAgent(gemini)
 
+    # ── 4a. Pull lesson + RAG context so Aria anchors her hint in the
+    # actual source the student saw — not generic physics knowledge.
+    topic_name: str | None = None
+    retrieved: list[Any] = []
+    topic_id_raw = session.get("topic_id") if isinstance(session, dict) else None
+    if topic_id_raw:
+        try:
+            from app.content import retriever as rag_retriever
+            from app.core.supabase import get_supabase
+
+            sb = get_supabase()
+            if sb is not None:
+                t_resp = (
+                    sb.table("topics")
+                    .select("name")
+                    .eq("id", str(topic_id_raw))
+                    .limit(1)
+                    .execute()
+                )
+                t_rows = getattr(t_resp, "data", None) or []
+                if t_rows:
+                    topic_name = t_rows[0].get("name")
+
+            # Use the student's question if they typed one; otherwise probe
+            # by topic name so retrieval still surfaces the relevant chunk.
+            rag_query = (question or topic_name or "").strip()
+            if rag_query:
+                retrieved = await rag_retriever.fetch_context(
+                    topic_id=str(topic_id_raw),
+                    question=rag_query,
+                    last_step_idx=current_step_idx,
+                    supabase=None,  # let the retriever build its own
+                )
+        except Exception as e:  # noqa: BLE001 — never block the sketch on RAG failure
+            log.warning("sketch_rag_fetch_failed", error=str(e))
+            retrieved = []
+
     # We collect a small summary while streaming so the background task can
     # save a meaningful row.
     summary: dict[str, Any] = {"shape": None, "text_parts": []}
@@ -217,13 +254,16 @@ async def analyze_sketch(
             mime=mime,
             bytes=len(png_bytes),
             current_step_idx=current_step_idx,
+            topic_name=topic_name,
+            rag_chunks=len(retrieved),
         )
         try:
             async for ev in agent.analyze_sketch(
                 png_bytes=png_bytes,
-                topic_name=None,
+                topic_name=topic_name,
                 question=question,
                 mime_type=mime,
+                retrieved_chunks=retrieved,
             ):
                 if ev.get("type") == "recognition":
                     summary["shape"] = ev.get("shape")

@@ -60,18 +60,53 @@ _KNOWN_SHAPES = (
 )
 
 
-def _build_user_prompt(topic_name: str | None, question: str | None) -> str:
+def _format_passages(passages: list[Any] | None) -> str:
+    """Render retrieved RAG chunks for inclusion in the vision prompt.
+
+    Each passage only needs `.text` — same attribute the live tutor's
+    prompts use. Trim aggressively because Vision prompts already pay a
+    lot for the image bytes.
+    """
+    if not passages:
+        return ""
+    parts: list[str] = []
+    for i, p in enumerate(passages, 1):
+        body = (getattr(p, "text", "") or "").strip()
+        if not body:
+            continue
+        if len(body) > 500:
+            body = body[:500].rstrip() + "…"
+        parts.append(f"[passage {i}]\n{body}")
+    if not parts:
+        return ""
+    return (
+        "\nSOURCE PASSAGES (the lesson the student just saw — anchor your "
+        "hint here, not generic physics knowledge):\n"
+        "----- BEGIN SOURCE -----\n"
+        + "\n\n".join(parts)
+        + "\n----- END SOURCE -----\n"
+    )
+
+
+def _build_user_prompt(
+    topic_name: str | None,
+    question: str | None,
+    passages: list[Any] | None = None,
+) -> str:
     """Compose the per-request user prompt."""
     ctx = f" The current lesson is about: {topic_name}." if topic_name else ""
     qctx = f' The student asked: "{question}".' if question else ""
     return (
-        f"{ctx}{qctx}\n\n"
+        f"{ctx}{qctx}\n"
+        f"{_format_passages(passages)}\n"
         "Identify what the student drew. Reply in this exact format:\n"
         'Line 1 (JSON only): {"shape": '
         '"wave|line|equation|circle|arrow|writing|other", '
         '"confidence": 0.0-1.0, "intent": "short description"}\n'
         "Then a blank line, then a SHORT Socratic message (2-3 sentences) asking "
-        "the student to explain their drawing. Never give the answer."
+        "the student to explain their drawing. Anchor your hint in the SOURCE "
+        "PASSAGES above when they are present — paraphrase, do not quote. "
+        "Never give the answer."
     )
 
 
@@ -152,6 +187,7 @@ class VisionAgent:
         topic_name: str | None = None,
         question: str | None = None,
         mime_type: str = "image/png",
+        retrieved_chunks: list[Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Yield a structured event stream for a single sketch analysis.
 
@@ -162,7 +198,7 @@ class VisionAgent:
             ``{"type": "error", "message": ...}``  (on Gemini failure)
         """
         b64 = base64.b64encode(png_bytes).decode("ascii")
-        prompt = _build_user_prompt(topic_name, question)
+        prompt = _build_user_prompt(topic_name, question, retrieved_chunks)
 
         log.info(
             "vision_analyze_start",
@@ -170,6 +206,7 @@ class VisionAgent:
             mime=mime_type,
             has_question=bool(question),
             has_topic=bool(topic_name),
+            retrieved=len(retrieved_chunks or []),
         )
 
         try:
