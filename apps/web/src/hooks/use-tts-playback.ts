@@ -58,6 +58,12 @@ interface StartArgs {
   /** Resume from this offset within `text`. Best-effort under speechSynthesis. */
   startMs?: number;
   onProgress?: (ms: number) => void;
+  /**
+   * Fires once when this utterance finishes playing naturally — never on
+   * flush()/barge-in. When muted (no audio) it fires after an estimated
+   * read time so the lesson still progresses. Drives step auto-advance.
+   */
+  onEnded?: () => void;
 }
 
 export interface UseTtsPlaybackResult {
@@ -173,6 +179,10 @@ export function useTtsPlayback({
   const accumulatedMsRef = useRef<number>(0);
   const pausedRef = useRef<boolean>(false);
   const progressTimerRef = useRef<number | null>(null);
+  // Completion callback for the current utterance + the muted-mode timer
+  // that stands in for a media `ended` event when no audio plays.
+  const onEndedRef = useRef<(() => void) | null>(null);
+  const mutedEndTimerRef = useRef<number | null>(null);
 
   /** Internal — POST /v1/tts and return a blob URL. Used by both
    *  `start()` (when cache misses) and `prefetch()` (warm-up). */
@@ -309,6 +319,13 @@ export function useTtsPlayback({
         // ignored
       }
     }
+    // Drop the muted-mode completion timer + callback — a flush is a hard
+    // cancel, so the utterance must NOT report completion.
+    if (mutedEndTimerRef.current !== null) {
+      window.clearTimeout(mutedEndTimerRef.current);
+      mutedEndTimerRef.current = null;
+    }
+    onEndedRef.current = null;
     utterRef.current = null;
     startedAtRef.current = 0;
     accumulatedMsRef.current = 0;
@@ -372,6 +389,7 @@ export function useTtsPlayback({
           setSpeaking(false);
           setProgress(1);
           stopProgressTimer();
+          onEndedRef.current?.();
         };
         u.onerror = () => {
           startedAtRef.current = 0;
@@ -394,8 +412,31 @@ export function useTtsPlayback({
    * a TTS outage doesn't silence the lesson.
    */
   const start = useCallback(
-    ({ text, startMs = 0, onProgress: localOnProgress }: StartArgs) => {
-      if (mutedRef.current) return;
+    ({ text, startMs = 0, onProgress: localOnProgress, onEnded }: StartArgs) => {
+      // Register this utterance's completion callback; drop any pending
+      // muted-mode timer left over from a previous utterance.
+      onEndedRef.current = onEnded ?? null;
+      if (mutedEndTimerRef.current !== null) {
+        window.clearTimeout(mutedEndTimerRef.current);
+        mutedEndTimerRef.current = null;
+      }
+
+      if (mutedRef.current) {
+        // No audio plays while muted — but the student still reads the
+        // caption, so report completion after an estimated read time so
+        // the lesson keeps advancing instead of stalling.
+        if (onEnded && text.trim()) {
+          const estMs = Math.min(
+            60_000,
+            Math.max(4_000, Math.round(text.length / CHARS_PER_MS)),
+          );
+          mutedEndTimerRef.current = window.setTimeout(() => {
+            mutedEndTimerRef.current = null;
+            onEndedRef.current?.();
+          }, estMs);
+        }
+        return;
+      }
       if (!text.trim()) return;
 
       // Reset reveal progress for the new utterance.
@@ -482,6 +523,7 @@ export function useTtsPlayback({
             setProgress(1);
             stopProgressTimer();
             releaseAudio();
+            onEndedRef.current?.();
           };
           audio.onerror = () => {
             startedAtRef.current = 0;
@@ -622,6 +664,10 @@ export function useTtsPlayback({
       if (progressTimerRef.current !== null) {
         window.clearInterval(progressTimerRef.current);
         progressTimerRef.current = null;
+      }
+      if (mutedEndTimerRef.current !== null) {
+        window.clearTimeout(mutedEndTimerRef.current);
+        mutedEndTimerRef.current = null;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -127,7 +127,10 @@ const LESSON_STEPS: LessonStep[] = [
   },
 ];
 
-const LESSON_AUTO_ADVANCE_MS = 8000;
+// Steps normally advance when Aria finishes narrating (TTS `onEnded`).
+// This is only a safety net: if both audio AND speechSynthesis fail to
+// fire a completion event, don't let a step hang forever.
+const LESSON_SAFETY_ADVANCE_MS = 90_000;
 
 const STEP_TITLES = [
   '',
@@ -282,7 +285,13 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
     if (!s) return;
     const resumeFromMs =
       bookmark && bookmark.stepIndex === step ? bookmark.audioOffsetMs : 0;
-    tts.start({ text: s.tts, startMs: resumeFromMs });
+    tts.start({
+      text: s.tts,
+      startMs: resumeFromMs,
+      // Smooth playback: advance to the next step only once Aria has
+      // actually finished narrating this one — never mid-sentence.
+      onEnded: () => setStep((x) => (x < total ? x + 1 : x)),
+    });
     // Bookmark has been consumed — clear so subsequent step changes start fresh.
     if (resumeFromMs > 0) setBookmark(null);
     // Warm the next step's TTS so the ~3-5s Gemini Live latency hides
@@ -293,12 +302,14 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, playing, qaOpen, voiceOpen, sketchOn, quizMeOpen, muted]);
 
-  // Auto-advance through steps.
+  // Safety net only — the real step advance is driven by TTS completion
+  // (the `onEnded` callback in the speak effect above). This guards
+  // against a step stalling forever if a completion event never fires.
   useEffect(() => {
     if (!playing || qaOpen || voiceOpen || sketchOn || quizMeOpen) return;
     const id = setTimeout(() => {
       setStep((s) => (s < total ? s + 1 : s));
-    }, LESSON_AUTO_ADVANCE_MS);
+    }, LESSON_SAFETY_ADVANCE_MS);
     return () => clearTimeout(id);
   }, [step, playing, qaOpen, voiceOpen, sketchOn, quizMeOpen, total]);
 
