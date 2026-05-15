@@ -8,6 +8,7 @@
  */
 import { CircularMotionScene } from './circular-motion-scene';
 import { CollisionScene } from './collision-scene';
+import { CustomSvgScene } from './custom-svg-scene';
 import { EnergyBarChartScene } from './energy-bar-chart-scene';
 import { FluidColumnScene } from './fluid-column-scene';
 import { FreeBodyDiagramScene } from './free-body-diagram-scene';
@@ -33,6 +34,8 @@ export const SCENE_REGISTRY: Record<string, SceneComponent> = {
   'vector-arrows': VectorArrowsScene,
   collision: CollisionScene,
   'fluid-column': FluidColumnScene,
+  // Phase C fallback — model-authored drawing for steps no typed scene fits.
+  'custom-svg': CustomSvgScene,
 };
 
 /** Scene type keys the lesson generator is allowed to emit. */
