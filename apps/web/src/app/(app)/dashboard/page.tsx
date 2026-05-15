@@ -310,7 +310,11 @@ export default function DashboardPage() {
                 name: u.name,
                 count: u.topics.length,
                 done: 0,
-                topics: u.topics.map((t) => ({ name: t.name, dur: fmtDur(t.duration_min) })),
+                topics: u.topics.map((t) => ({
+                  id: t.id,
+                  name: t.name,
+                  dur: fmtDur(t.duration_min),
+                })),
               }}
               open={openUnit === u.id}
               onToggle={() => setOpenUnit(openUnit === u.id ? null : u.id)}

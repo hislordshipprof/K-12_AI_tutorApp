@@ -539,6 +539,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
         {/* QUIZ ME NOW */}
         <QuizMePop
           active={quizMeOpen}
+          sessionId={sessionId}
           onClose={() => {
             setQuizMeOpen(false);
             setPlaying(true);
@@ -597,7 +598,10 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
               type="button"
               className="btn btn-amber"
               style={{ width: '100%' }}
-              onClick={() => router.push(`/classroom/quiz/${topic.slug}`)}
+              onClick={() => {
+                const path = `/classroom/quiz/${topic.slug}`;
+                router.push(sessionId ? `${path}?session=${sessionId}` : path);
+              }}
             >
               Skip to quiz →
             </button>

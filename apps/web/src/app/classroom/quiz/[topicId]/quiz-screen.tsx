@@ -1,58 +1,133 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
 import { AriaMascot } from '@/components/aria/aria-mascot';
 import { Icon } from '@/components/aria/icon';
-import { api } from '@/lib/api';
+import { MathContent } from '@/components/aria/math-content';
+import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 interface QuizScreenProps {
   topicId: string;
 }
 
-interface QuizOption {
-  ltr: string;
-  t: string;
+interface FetchedQuestion {
+  idx: number;
+  prompt: string;
+  choices: string[];
 }
 
-const OPTIONS: QuizOption[] = [
-  { ltr: 'A', t: '4 seconds' },
-  { ltr: 'B', t: '0.25 seconds' },
-  { ltr: 'C', t: '8 seconds' },
-  { ltr: 'D', t: '0.5 seconds' },
-];
-const CORRECT = 1;
+interface AttemptResult {
+  correct: boolean | null;
+  correct_idx: number | null;
+  explanation: string | null;
+}
 
 /**
- * Single-question knowledge check (the prototype's "Question 2 of 3").
+ * End-of-lesson "Knowledge check" screen.
  *
- * Selecting an answer reveals feedback after a short delay; the "Next"
- * button is gated until feedback is shown. We POST the attempt to the
- * backend best-effort but don't block the UI on the result.
+ * When a `?session=<id>` query param is present (the classroom-shell passes
+ * it on the "Quiz me" button), we fetch a real DB-backed question via
+ * `/v1/sessions/{id}/quiz` and score against the real answer key. Without
+ * a session id (legacy / Playwright fixture deep-links) we fall back to
+ * the prototype's hardcoded "wave period" question so the screen still
+ * renders something sensible.
  */
 export function QuizScreen({ topicId }: QuizScreenProps) {
   const router = useRouter();
+  const search = useSearchParams();
+  const sessionId = search.get('session');
+
+  // Hardcoded fallback (matches the prototype + Playwright assertions).
+  const FALLBACK = {
+    prompt: 'A wave has a frequency of 4 Hz. What is its period?',
+    choices: ['4 seconds', '0.25 seconds', '8 seconds', '0.5 seconds'],
+    correctIdx: 1,
+    correctExplanation:
+      '<b>Nailed it.</b> $T = 1/f = 1/4 = 0.25$s. Remember: frequency and period are reciprocals — they always move opposite directions.',
+    wrongExplanation:
+      '<b>Close — but no.</b> The relationship is $T = 1/f$. So $1 \\div 4 = 0.25$s. Period and frequency are always reciprocals.',
+  };
+
+  const [question, setQuestion] = useState<FetchedQuestion | null>(null);
+  const [mode, setMode] = useState<'live' | 'fallback'>('fallback');
   const [picked, setPicked] = useState<number | null>(null);
   const [showFb, setShowFb] = useState(false);
+  const [reveal, setReveal] = useState<AttemptResult | null>(null);
 
-  const onPick = (i: number) => {
+  // Try to fetch a real question when we have a session id.
+  useEffect(() => {
+    if (!sessionId) {
+      setMode('fallback');
+      return;
+    }
+    let cancelled = false;
+    api<FetchedQuestion>(`/v1/sessions/${sessionId}/quiz`)
+      .then((q) => {
+        if (cancelled) return;
+        setQuestion(q);
+        setMode('live');
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // 404 NO_QUESTIONS or anything else → fall back to prototype copy.
+        if (err instanceof ApiError) {
+          // Intentional swallow — the screen still renders the fallback.
+        }
+        setMode('fallback');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
+  const onPick = async (i: number) => {
     if (showFb) return;
     setPicked(i);
     setTimeout(() => setShowFb(true), 350);
-    // Fire-and-forget — the backend is stubbed for now.
-    api(`/v1/quiz/${topicId}/attempt`, {
-      method: 'POST',
-      json: { question_idx: 1, picked_idx: i },
-    }).catch(() => undefined);
+
+    if (mode === 'live' && question && sessionId) {
+      try {
+        const result = await api<AttemptResult>(
+          `/v1/sessions/${sessionId}/quiz/attempt`,
+          {
+            method: 'POST',
+            json: { question_idx: question.idx, picked_idx: i },
+          },
+        );
+        setReveal(result);
+      } catch {
+        // Keep the optimistic UI even if scoring fails.
+      }
+    } else {
+      // Fallback mode still POSTs (mock api expects it) but ignores result.
+      api(`/v1/quiz/${topicId}/attempt`, {
+        method: 'POST',
+        json: { question_idx: 1, picked_idx: i },
+      }).catch(() => undefined);
+    }
   };
 
-  const next = () => {
-    // Once we have a real session id this becomes the actual session.
-    // For now route to the topic slug so the completion screen has *something* to display.
-    router.push(`/classroom/complete/${topicId}`);
-  };
+  const next = () => router.push(`/classroom/complete/${topicId}`);
+
+  // Pick which dataset drives the render.
+  const prompt = mode === 'live' && question ? question.prompt : FALLBACK.prompt;
+  const choices =
+    mode === 'live' && question ? question.choices : FALLBACK.choices;
+  const correctIdx =
+    mode === 'live' ? reveal?.correct_idx ?? null : FALLBACK.correctIdx;
+  const isCorrect =
+    mode === 'live'
+      ? reveal?.correct === true
+      : picked === FALLBACK.correctIdx;
+  const feedbackHtml =
+    mode === 'live'
+      ? reveal?.explanation ?? ''
+      : isCorrect
+        ? FALLBACK.correctExplanation
+        : FALLBACK.wrongExplanation;
 
   return (
     <div className="screen min-h-screen overflow-y-auto bg-paper">
@@ -63,7 +138,9 @@ export function QuizScreen({ topicId }: QuizScreenProps) {
           </div>
           <div>
             <div className="quiz-ttl">Knowledge check</div>
-            <div className="quiz-sub">Wave Properties &amp; Anatomy · 3 questions · ~5 min</div>
+            <div className="quiz-sub">
+              {mode === 'live' ? 'Live question · scored by Aria' : 'Wave Properties & Anatomy · 3 questions · ~5 min'}
+            </div>
           </div>
         </div>
         <div className="quiz-prog">
@@ -73,24 +150,29 @@ export function QuizScreen({ topicId }: QuizScreenProps) {
         </div>
 
         <div className="q-card">
-          <span className="q-num">Question 2 of 3</span>
+          <span className="q-num">Question {(question?.idx ?? 1) + 1} of 3</span>
           <div className="q-text">
-            A wave has a frequency of{' '}
-            <span style={{ background: 'var(--amber-soft)', padding: '0 6px', borderRadius: 4 }}>
-              4 Hz
-            </span>
-            . What is its{' '}
-            <em style={{ fontStyle: 'italic', color: 'var(--indigo)' }}>period</em>?
+            {mode === 'live' ? <MathContent html={prompt} /> : (
+              <>
+                A wave has a frequency of{' '}
+                <span style={{ background: 'var(--amber-soft)', padding: '0 6px', borderRadius: 4 }}>
+                  4 Hz
+                </span>
+                . What is its{' '}
+                <em style={{ fontStyle: 'italic', color: 'var(--indigo)' }}>period</em>?
+              </>
+            )}
           </div>
           <div className="q-opts">
-            {OPTIONS.map((o, i) => {
+            {choices.map((opt, i) => {
               let cls = '';
               if (showFb) {
-                if (i === CORRECT) cls = 'correct';
+                if (correctIdx !== null && i === correctIdx) cls = 'correct';
                 else if (picked === i) cls = 'wrong';
               } else if (picked === i) {
                 cls = 'selected';
               }
+              const letter = ['A', 'B', 'C', 'D'][i] ?? '?';
               return (
                 <button
                   key={i}
@@ -98,8 +180,10 @@ export function QuizScreen({ topicId }: QuizScreenProps) {
                   className={cn('q-opt', cls)}
                   onClick={() => onPick(i)}
                 >
-                  <div className="q-letter">{o.ltr}</div>
-                  <div className="q-opt-text">{o.t}</div>
+                  <div className="q-letter">{letter}</div>
+                  <div className="q-opt-text">
+                    {mode === 'live' ? <MathContent html={opt} /> : opt}
+                  </div>
                 </button>
               );
             })}
@@ -112,16 +196,13 @@ export function QuizScreen({ topicId }: QuizScreenProps) {
               <div className="q-fb-body">
                 <div className="q-fb-who">Prof. Aria</div>
                 <div className="q-fb-txt">
-                  {picked === CORRECT ? (
+                  {mode === 'live' && reveal ? (
                     <>
-                      <b>Nailed it.</b> T = 1/f = 1/4 = 0.25s. Remember: frequency and period are
-                      reciprocals — they always move opposite directions.
+                      <b>{isCorrect ? 'Nailed it.' : 'Close — but no.'}</b>{' '}
+                      {feedbackHtml ? <MathContent html={feedbackHtml} /> : null}
                     </>
                   ) : (
-                    <>
-                      <b>Close — but no.</b> The relationship is T = 1/f. So 1 ÷ 4 = 0.25s. Period
-                      and frequency are always reciprocals.
-                    </>
+                    <MathContent html={feedbackHtml} />
                   )}
                 </div>
               </div>
@@ -144,6 +225,7 @@ export function QuizScreen({ topicId }: QuizScreenProps) {
               onClick={() => {
                 setPicked(null);
                 setShowFb(false);
+                setReveal(null);
               }}
             >
               Skip
