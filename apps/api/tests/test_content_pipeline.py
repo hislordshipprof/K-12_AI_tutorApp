@@ -81,8 +81,8 @@ def test_chunker_handles_empty_section() -> None:
 def test_mapping_yaml_covers_all_courses() -> None:
     mapping = sources.load_mapping()
     keys = list(mapping.keys())
-    # 8 physics + 10 calc + 8 bio = 26 topics
-    assert len(keys) == 26, f"expected 26 topic slugs, got {len(keys)}"
+    # 24 physics (8 unit overviews + 16 sub-topics) + 10 calc + 8 bio = 42.
+    assert len(keys) == 42, f"expected 42 topic slugs, got {len(keys)}"
     assert any(k.startswith("ap-physics-1.") for k in keys)
     assert any(k.startswith("ap-calc-bc.") for k in keys)
     assert any(k.startswith("ap-biology.") for k in keys)

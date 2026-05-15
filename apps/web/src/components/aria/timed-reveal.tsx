@@ -22,7 +22,7 @@
  */
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 
