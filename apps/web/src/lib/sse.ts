@@ -59,6 +59,17 @@ export async function* streamSSE<T = unknown>(
     headers.Authorization = `Bearer ${token}`;
   }
 
+  // Demo / preview mode: mirror lib/api.ts — the API runs DEV_MODE=true and
+  // accepts an X-Dev-User-Id header in lieu of a real JWT. Without this an
+  // unauthenticated SSE call (no Supabase session) 401s.
+  if (
+    process.env.NEXT_PUBLIC_DEMO_MODE === 'true' &&
+    !headers.Authorization &&
+    !headers['X-Dev-User-Id']
+  ) {
+    headers['X-Dev-User-Id'] = '00000000-0000-0000-0000-000000000001';
+  }
+
   const { json: _json, anonymous: _anonymous, body: _body, headers: _headers, ...rest } = init;
   void _json;
   void _anonymous;

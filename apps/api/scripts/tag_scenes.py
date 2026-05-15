@@ -18,101 +18,28 @@ Idempotent — re-running re-tags from scratch. Run:
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
 API_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(API_ROOT))
 
+from app.content import scene_tagger  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.core.logging import get_logger  # noqa: E402
 
 log = get_logger(__name__)
 
 
-# ── Scene rules ──────────────────────────────────────────────────────────────
-# Ordered: the first rule whose pattern matches the step text wins. Patterns
-# are matched case-insensitively against `tts + " " + html` (tags stripped).
-SCENE_RULES: list[tuple[str, str]] = [
-    # Most specific physics concepts first — first match wins.
-    ("wave", r"wavelength|crest|trough|transverse|\bwave\b|amplitude"),
-    ("spring-mass", r"\bspring\b|hooke|oscillat|simple harmonic|restoring force|periodic motion"),
-    ("circular-motion", r"centripetal|circular motion|orbit|uniform circular|rotat"),
-    ("projectile-arc", r"projectile|trajectory|\blaunch|parabola|thrown|mid.?air"),
-    ("inclined-plane", r"incline|\bramp\b|tilted surface"),
-    ("collision", r"collision|collide|elastic|inelastic|bounces off|impulse|momentum"),
-    ("energy-bar-chart", r"kinetic energy|potential energy|conservation of energy|"
-        r"energy bar|\bwork\b|\bjoule|mechanical energy|stored energy"),
-    ("free-body-diagram", r"free.?body|net force|newton'?s (first|second|third)|"
-        r"forces acting|friction|\bgravity\b|\btension\b|normal force|\bweight\b|\bforce\b"),
-    ("motion-graph", r"position.time|velocity.time|graph of|versus time|"
-        r"slope of the line|\bvelocity\b|\bacceleration\b"),
-    ("vector-arrows", r"\bvector\b|component of|resultant|magnitude and direction"),
-    ("fluid-column", r"\bfluid\b|pressure|buoyan|\bdensity\b|archimedes|bernoulli|submerged"),
-    ("number-line", r"displacement|\bposition\b|distance traveled|reference frame"),
-]
-
-_TAG_RE = re.compile(r"<[^>]+>")
-_MATH_RE = re.compile(r"\$+[^$]*\$+")
-
-
-def _plain(text: str) -> str:
-    """Strip HTML tags + LaTeX so keyword matching sees prose only."""
-    no_tags = _TAG_RE.sub(" ", text or "")
-    no_math = _MATH_RE.sub(" ", no_tags)
-    return no_math.lower()
-
-
-def _headline(html: str) -> str:
-    """Pull the first hl-* highlight phrase as a scene title; fall back to
-    the first few plain words."""
-    m = re.search(r'<span class="hl-[^"]*">([^<]+)</span>', html or "")
-    if m:
-        return _MATH_RE.sub("", m.group(1)).strip()[:48]
-    plain = _TAG_RE.sub("", html or "").strip()
-    return plain.split(".")[0][:48]
-
-
-def _default_params(scene_type: str, step: dict) -> dict:
-    """Minimal, always-valid params for a scene. The scene components ship
-    sensible defaults, so we mostly pass a title and let them fill the rest.
-    A couple of scenes look bare with zero params — give those a nudge."""
-    title = _headline(step.get("html", ""))
-    base: dict = {"title": title} if title else {}
-
-    if scene_type == "number-line":
-        # A bare axis is dull — seed two generic positions + a displacement.
-        # Labels are PLAIN TEXT: scene SVG <text> can't typeset LaTeX, so
-        # we use Unicode subscripts (x₀) and prose ("displacement").
-        base.update(
-            {
-                "unit": "m",
-                "min": 0,
-                "max": 10,
-                "points": [
-                    {"value": 2, "label": "x₀", "color": "blue"},
-                    {"value": 8, "label": "xₑ", "color": "yellow"},
-                ],
-                "arrow": {"from": 2, "to": 8, "label": "displacement"},
-            }
-        )
-    elif scene_type == "wave":
-        base["label"] = "both"
-    elif scene_type == "motion-graph":
-        base.update({"xLabel": "time", "yLabel": "position", "curve": "linear"})
-    elif scene_type == "vector-arrows":
-        base["showComponents"] = True
-    return base
-
-
 def _tag_step(step: dict) -> dict | None:
-    """Return a `{type, params}` scene for a step, or None if nothing fits."""
-    text = _plain(step.get("tts", "")) + " " + _plain(step.get("html", ""))
-    for scene_type, pattern in SCENE_RULES:
-        if re.search(pattern, text):
-            return {"type": scene_type, "params": _default_params(scene_type, step)}
-    return None
+    """Return a `{type, params}` scene for a step, or None if nothing fits.
+
+    The rule table + param defaults live in ``app.content.scene_tagger`` so
+    the live Q&A endpoint can share them.
+    """
+    title = scene_tagger.headline_from_html(step.get("html", ""))
+    text = f"{step.get('tts', '')} {step.get('html', '')}"
+    return scene_tagger.tag(text, title)
 
 
 def main(argv: list[str] | None = None) -> int:

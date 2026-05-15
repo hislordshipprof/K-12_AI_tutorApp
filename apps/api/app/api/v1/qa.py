@@ -26,6 +26,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.agents.tutor import TutorAgent, get_tutor
+from app.content import scene_tagger
 from app.core.logging import get_logger
 from app.core.rate_limit import limiter
 from app.core.security import get_current_user
@@ -79,6 +80,14 @@ async def ask_question(
         )
         token_count = 0
         try:
+            # Draw alongside the answer: keyword-match the question to one
+            # of the 12 typed scenes (same rule table the lesson steps use).
+            # Emitted as the first frame so the diagram animates while Aria
+            # is still composing her reply. No match → text-only answer.
+            scene = scene_tagger.tag(body.question, body.question.strip()[:48])
+            if scene is not None:
+                yield _sse({"type": "scene", "scene": scene}).encode("utf-8")
+
             async for token in tutor.handle_question(
                 session_id=session_id,
                 user_id=user_id,

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AriaMascot } from '@/components/aria/aria-mascot';
 import { Icon } from '@/components/aria/icon';
 import { MathContent } from '@/components/aria/math-content';
-import { QAAnswerSVG, type QATopic } from '@/components/classroom/qa-answer-svg';
+import { QASceneCanvas, type QAScene } from '@/components/classroom/qa-scene-canvas';
 import { streamSSE } from '@/lib/sse';
 import { cn } from '@/lib/utils';
 
@@ -20,9 +20,11 @@ interface QAOverlayProps {
 }
 
 interface SSEPayload {
-  type: 'token' | 'done' | 'error';
+  type: 'token' | 'done' | 'error' | 'scene';
   content?: string;
   message?: string;
+  /** Sent once, before the first token, when the question matches a scene. */
+  scene?: QAScene;
 }
 
 const CHIPS = [
@@ -32,17 +34,10 @@ const CHIPS = [
   'What units is frequency in?',
 ];
 
-function topicForQuestion(text: string): QATopic {
-  const lower = text.toLowerCase();
-  if (/amplitude|height|energy|tall/.test(lower)) return 'amplitude';
-  if (/wavelength|λ|lambda|distance|cycle/.test(lower)) return 'wavelength';
-  return 'equation';
-}
-
 /**
  * "Raise hand" overlay — student asks Aria a question; Aria streams a
- * Socratic answer over SSE while a topic-matched chalk diagram animates
- * onto the board.
+ * Socratic answer over SSE while a keyword-matched chalk diagram animates
+ * onto the board (the same scene engine the lesson steps use).
  *
  * The SSE call POSTs to `/v1/sessions/{sessionId}/qa`. When `sessionId`
  * is null (offline / unauthenticated) we still surface the input UI but
@@ -51,7 +46,7 @@ function topicForQuestion(text: string): QATopic {
 export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayProps) {
   const [stage, setStage] = useState<Stage>('input');
   const [q, setQ] = useState('');
-  const [topic, setTopic] = useState<QATopic>(null);
+  const [scene, setScene] = useState<QAScene | null>(null);
   const [answer, setAnswer] = useState('');
   const [streaming, setStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -85,7 +80,7 @@ export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayPro
     if (!active) {
       setStage('input');
       setQ('');
-      setTopic(null);
+      setScene(null);
       setAnswer('');
       setStreaming(false);
       abortRef.current?.abort();
@@ -116,7 +111,7 @@ export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayPro
     const trimmed = text.trim();
     if (!trimmed) return;
     setQ(trimmed);
-    setTopic(topicForQuestion(trimmed));
+    setScene(null);
     setStage('asked');
     setAnswer('');
     setStreaming(true);
@@ -132,7 +127,7 @@ export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayPro
       // No backend session — show a static fallback after the diagram animates.
       setTimeout(() => {
         setAnswer(
-          "I'm still warming up — try again in a moment. Meanwhile, take a look at the diagram I just drew.",
+          "I'm still warming up — try asking again in a moment.",
         );
         setStreaming(false);
       }, 1200);
@@ -145,7 +140,9 @@ export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayPro
         signal: ctl.signal,
       });
       for await (const ev of iter) {
-        if (ev.type === 'token' && ev.content) {
+        if (ev.type === 'scene' && ev.scene) {
+          setScene(ev.scene);
+        } else if (ev.type === 'token' && ev.content) {
           setAnswer((a) => a + ev.content);
         } else if (ev.type === 'done') {
           break;
@@ -168,7 +165,7 @@ export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayPro
   return (
     <div className={cn('qa-ov', active && 'active')}>
       <div className="qa-dim" />
-      <QAAnswerSVG topic={stage === 'answered' ? topic : null} />
+      <QASceneCanvas scene={scene} />
 
       {stage !== 'input' && (
         <div className="qa-q">
@@ -288,7 +285,7 @@ export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayPro
                 setStage('input');
                 setQ('');
                 setAnswer('');
-                setTopic(null);
+                setScene(null);
               }}
               style={{ flex: 1, justifyContent: 'center' }}
             >
