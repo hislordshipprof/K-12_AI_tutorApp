@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Icon } from '@/components/aria/icon';
 import { CourseCard } from '@/components/aria/course-card';
@@ -68,9 +68,26 @@ function prettyDate(): string {
   return new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
+const ONBOARDING_KEY = 'edumind.onboarding';
+
 export default function DashboardPage() {
   const router = useRouter();
   const [openUnit, setOpenUnit] = useState<string | null>('u4');
+
+  // Active course = clicked card OR onboarding's primary OR first course.
+  // Initialised lazily from localStorage so a returning user sees their
+  // onboarding choice respected even before they tap a card.
+  const [activeSlugState, setActiveSlugState] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(ONBOARDING_KEY);
+      if (!raw) return;
+      const prefs = JSON.parse(raw) as { primarySlug?: string };
+      if (prefs.primarySlug) setActiveSlugState(prefs.primarySlug);
+    } catch {
+      // ignored — falls through to first-course default below.
+    }
+  }, []);
 
   // Real user profile + dashboard stats.
   const { data: me } = useMe();
@@ -99,10 +116,16 @@ export default function DashboardPage() {
     staleTime: 60_000,
   });
 
-  // Curriculum tree — defaults to AP Physics 1 (the only course with seeded
-  // topic content as of 2026-05-14). When more content lands we can expand
-  // this to follow the active course card.
-  const activeSlug = courses.find((c) => c.active)?.slug ?? 'ap-physics-1';
+  // Curriculum tree — driven by the active card (which itself respects
+  // onboarding's primarySlug when no card has been clicked).
+  const firstCourseSlug = courses[0]?.slug;
+  const activeSlug =
+    activeSlugState ?? firstCourseSlug ?? 'ap-physics-1';
+  // Recompute `active` from state instead of the static i===0 default.
+  const coursesWithActive = courses.map((c) => ({
+    ...c,
+    active: c.slug === activeSlug,
+  }));
   const { data: units = [] } = useQuery<UnitRow[]>({
     queryKey: ['course-units', activeSlug],
     queryFn: async () => {
@@ -288,7 +311,7 @@ export default function DashboardPage() {
           action="+ Add a course"
         />
         <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-          {courses.map((c) => (
+          {coursesWithActive.map((c) => (
             <CourseCard
               key={c.id}
               name={c.name}
@@ -297,7 +320,17 @@ export default function DashboardPage() {
               icon={c.icon}
               color={c.color}
               active={c.active}
-              onClick={c.active ? goClassroom : undefined}
+              onClick={() => {
+                // First click on a non-active card selects it (updates
+                // the curriculum tree below). Re-clicking the active card
+                // starts a lesson — either resumes the user's most-recent
+                // session OR jumps to the first topic of that course.
+                if (!c.active) {
+                  setActiveSlugState(c.slug);
+                  return;
+                }
+                goClassroom();
+              }}
             />
           ))}
         </div>

@@ -75,6 +75,83 @@ ap-physics-1.unit-8.fluids:
   - openstax/college-physics-2e/ch-12/12-1-flow-rate-and-its-relation-to-velocity
   - openstax/college-physics-2e/ch-12/12-2-bernoullis-equation
 
+# ─── AP Physics 1 — CED 2024 sub-topic detail (2 per unit) ───────────────────
+# Unit 1
+ap-physics-1.unit-1.position-velocity-acceleration:
+  - openstax/college-physics-2e/ch-2/2-1-displacement
+  - openstax/college-physics-2e/ch-2/2-3-time-velocity-and-speed
+  - openstax/college-physics-2e/ch-2/2-4-acceleration
+
+ap-physics-1.unit-1.projectile-motion:
+  - openstax/college-physics-2e/ch-3/3-1-kinematics-in-two-dimensions-an-introduction
+  - openstax/college-physics-2e/ch-3/3-4-projectile-motion
+
+# Unit 2
+ap-physics-1.unit-2.newtons-laws-free-body-diagrams:
+  - openstax/college-physics-2e/ch-4/4-2-newtons-first-law-of-motion-inertia
+  - openstax/college-physics-2e/ch-4/4-3-newtons-second-law-of-motion-concept-of-a-system
+  - openstax/college-physics-2e/ch-4/4-4-newtons-third-law-of-motion-symmetry-in-forces
+
+ap-physics-1.unit-2.friction-circular-motion:
+  - openstax/college-physics-2e/ch-5/5-1-friction
+  - openstax/college-physics-2e/ch-6/6-2-centripetal-acceleration
+  - openstax/college-physics-2e/ch-6/6-3-centripetal-force
+
+# Unit 3
+ap-physics-1.unit-3.work-kinetic-energy:
+  - openstax/college-physics-2e/ch-7/7-1-work-the-scientific-definition
+  - openstax/college-physics-2e/ch-7/7-2-kinetic-energy-and-the-work-energy-theorem
+
+ap-physics-1.unit-3.potential-energy-conservation:
+  - openstax/college-physics-2e/ch-7/7-3-gravitational-potential-energy
+  - openstax/college-physics-2e/ch-7/7-6-conservation-of-energy
+
+# Unit 4
+ap-physics-1.unit-4.impulse-momentum:
+  - openstax/college-physics-2e/ch-8/8-1-linear-momentum-and-force
+  - openstax/college-physics-2e/ch-8/8-2-impulse
+
+ap-physics-1.unit-4.collisions-conservation:
+  - openstax/college-physics-2e/ch-8/8-3-conservation-of-momentum
+  - openstax/college-physics-2e/ch-8/8-4-elastic-collisions-in-one-dimension
+  - openstax/college-physics-2e/ch-8/8-5-inelastic-collisions-in-one-dimension
+
+# Unit 5
+ap-physics-1.unit-5.rotational-kinematics-torque:
+  - openstax/college-physics-2e/ch-10/10-1-angular-acceleration
+  - openstax/college-physics-2e/ch-10/10-2-kinematics-of-rotational-motion
+  - openstax/college-physics-2e/ch-9/9-2-the-second-condition-for-equilibrium
+
+ap-physics-1.unit-5.rotational-newtons-2nd-law:
+  - openstax/college-physics-2e/ch-10/10-3-dynamics-of-rotational-motion-rotational-inertia
+
+# Unit 6
+ap-physics-1.unit-6.rotational-kinetic-energy:
+  - openstax/college-physics-2e/ch-10/10-4-rotational-kinetic-energy-work-and-energy-revisited
+
+ap-physics-1.unit-6.angular-momentum-conservation:
+  - openstax/college-physics-2e/ch-10/10-5-angular-momentum-and-its-conservation
+  - openstax/college-physics-2e/ch-10/10-6-collisions-of-extended-bodies-in-two-dimensions
+
+# Unit 7
+ap-physics-1.unit-7.simple-harmonic-motion:
+  - openstax/college-physics-2e/ch-16/16-1-hookes-law-stress-and-strain-revisited
+  - openstax/college-physics-2e/ch-16/16-3-simple-harmonic-motion-a-special-periodic-motion
+
+ap-physics-1.unit-7.period-energy-shm:
+  - openstax/college-physics-2e/ch-16/16-2-period-and-frequency-in-oscillations
+  - openstax/college-physics-2e/ch-16/16-3-simple-harmonic-motion-a-special-periodic-motion
+
+# Unit 8
+ap-physics-1.unit-8.density-pressure:
+  - openstax/college-physics-2e/ch-11/11-2-density
+  - openstax/college-physics-2e/ch-11/11-3-pressure
+  - openstax/college-physics-2e/ch-11/11-4-variation-of-pressure-with-depth-in-a-fluid
+
+ap-physics-1.unit-8.buoyancy-bernoulli:
+  - openstax/college-physics-2e/ch-11/11-7-archimedes-principle
+  - openstax/college-physics-2e/ch-12/12-2-bernoullis-equation
+
 # ─── AP Calculus BC (2024 CED, 10 units) ─────────────────────────────────────
 ap-calc-bc.unit-1.limits-continuity:
   - openstax/calculus-volume-1/ch-2/2-1-a-preview-of-calculus

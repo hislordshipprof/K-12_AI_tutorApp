@@ -18,13 +18,24 @@ const GRADES = [
 ] as const;
 
 const COURSES = [
-  { name: 'AP Physics 1', emoji: '⚛️', desc: 'Mechanics, waves, electricity' },
-  { name: 'AP Calculus BC', emoji: '∫', desc: 'Derivatives, integrals, series' },
-  { name: 'AP Biology', emoji: '🧬', desc: 'Cells, genetics, evolution' },
-  { name: 'AP Chemistry', emoji: '🧪', desc: 'Atoms, reactions, equilibrium' },
-  { name: 'AP Statistics', emoji: '📊', desc: 'Probability, inference' },
-  { name: 'AP CS A', emoji: '💻', desc: 'Java, algorithms, OOP' },
+  { name: 'AP Physics 1', slug: 'ap-physics-1', emoji: '⚛️', desc: 'Mechanics, waves, electricity' },
+  { name: 'AP Calculus BC', slug: 'ap-calc-bc', emoji: '∫', desc: 'Derivatives, integrals, series' },
+  { name: 'AP Biology', slug: 'ap-biology', emoji: '🧬', desc: 'Cells, genetics, evolution' },
+  // The next three don't have seeded content yet — selecting them still records
+  // the preference, but the dashboard will fall back to whichever course
+  // actually has data for the curriculum tree.
+  { name: 'AP Chemistry', slug: 'ap-chemistry', emoji: '🧪', desc: 'Atoms, reactions, equilibrium' },
+  { name: 'AP Statistics', slug: 'ap-statistics', emoji: '📊', desc: 'Probability, inference' },
+  { name: 'AP CS A', slug: 'ap-cs-a', emoji: '💻', desc: 'Java, algorithms, OOP' },
 ] as const;
+
+const ONBOARDING_KEY = 'edumind.onboarding';
+interface OnboardingPrefs {
+  grade?: string;
+  courses?: string[];      // display names
+  primarySlug?: string;    // first selected course's slug — used by dashboard
+  goal?: string;
+}
 
 const GOALS = [
   {
@@ -116,7 +127,29 @@ export default function OnboardingPage() {
   const [courses, setCourses] = useState<string[]>([]);
   const [goal, setGoal] = useState<string | null>(null);
 
+  // Persist onboarding choices to localStorage so the dashboard can
+  // honour the course selection instead of always showing Physics.
+  const persist = (patch: Partial<OnboardingPrefs>) => {
+    try {
+      const existing: OnboardingPrefs = JSON.parse(
+        window.localStorage.getItem(ONBOARDING_KEY) ?? '{}',
+      );
+      const next: OnboardingPrefs = { ...existing, ...patch };
+      // Resolve primarySlug from the first selected course's display name.
+      if (next.courses && next.courses.length > 0) {
+        const first = COURSES.find((c) => c.name === next.courses![0]);
+        if (first) next.primarySlug = first.slug;
+      }
+      window.localStorage.setItem(ONBOARDING_KEY, JSON.stringify(next));
+    } catch {
+      // localStorage unavailable (private mode, SSR) — just drop the write.
+    }
+  };
+
   const next = () => {
+    // Snapshot current selections to localStorage at each step so a
+    // browser refresh doesn't wipe the choices the student already made.
+    persist({ grade: grade ?? undefined, courses, goal: goal ?? undefined });
     if (step === 3) {
       router.push('/dashboard');
       return;
