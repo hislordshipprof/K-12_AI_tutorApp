@@ -1,0 +1,44 @@
+{
+  "items": [
+    {
+      "tts": "Preparing your lesson.",
+      "html": "Preparing your lesson…",
+      "dur": "00:00"
+    },
+    {
+      "tts": "Picture plucking a guitar string. It bounces back and forth, making a steady sound that fades out slowly.",
+      "html": "Picture plucking a <span class=\"hl-y\">guitar string</span>. It bounces back and forth, making a steady sound.",
+      "dur": "01:30"
+    },
+    {
+      "tts": "When you pull the string to the side, it naturally wants to snap back to its quiet resting spot.",
+      "html": "When you pull the string to the side, it naturally wants to snap back to its <span class=\"hl-b\">quiet resting spot</span>.",
+      "dur": "03:15"
+    },
+    {
+      "tts": "That resting spot is called equilibrium. The pull that yanks the string back is the restoring force.",
+      "html": "That resting spot is called <strong>equilibrium</strong>. The pull that yanks the string back is the <span class=\"hl-p\">restoring force</span>.",
+      "dur": "04:45"
+    },
+    {
+      "tts": "How far you pull the string from equilibrium is its amplitude. It is just the maximum stretch.",
+      "html": "How far you pull the string from equilibrium is its <span class=\"hl-g\">amplitude</span>. It is just the maximum stretch.",
+      "dur": "06:20"
+    },
+    {
+      "tts": "The time for one bounce is the period, and frequency is bounces per second. They are exact opposites.",
+      "html": "The time for one bounce is the <strong>period</strong>, and <strong>frequency</strong> is bounces per second: <span class=\"hl-y\"><code>T = 1/f</code></span>.",
+      "dur": "08:10"
+    },
+    {
+      "tts": "For a weight on a spring, a heavier mass slows the bounce, but a stiffer spring speeds it up.",
+      "html": "For a weight on a spring, a heavier mass slows the bounce, but a stiffer spring speeds it up: <span class=\"hl-b\"><code>T = 2π√(m/k)</code></span>.",
+      "dur": "10:20"
+    },
+    {
+      "tts": "Because the bounce makes a repeating wave, we can track the object's exact position using cosine.",
+      "html": "Because the bounce makes a repeating wave, we can track the object's exact position: <span class=\"hl-p\"><code>x(t) = A cos(ωt)</code></span>.",
+      "dur": "12:45"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "checks": {
+    "length_eq_8": true,
+    "all_terms_present": true,
+    "all_equations_present": true,
+    "tts_le_120": true,
+    "html_allowlist": true,
+    "exactly_one_highlight": true,
+    "dur_monotonic_mmss": true
+  },
+  "issues": [],
+  "all_pass": true
+}

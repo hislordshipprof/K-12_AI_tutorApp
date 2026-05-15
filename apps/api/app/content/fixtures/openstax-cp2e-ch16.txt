@@ -1,0 +1,175 @@
+OpenStax College Physics 2e — Chapter 16: Oscillatory Motion and Waves
+Sections 16.1, 16.2, 16.3
+Source: https://openstax.org/books/college-physics-2e
+License: CC BY 4.0
+Retrieved: 2026-05-14
+
+================================================================================
+# 16.1 Hooke's Law: Stress and Strain Revisited
+================================================================================
+
+Newton's first law implies that an object oscillating back and forth experiences
+forces. Without force, the object would move in a straight line at constant
+speed rather than oscillate. When a plastic ruler is plucked to the side,
+deformation creates a restoring force in the opposite direction. Once released,
+this restoring force moves the ruler back toward its stable equilibrium
+position, where net force equals zero. However, the ruler gains momentum and
+continues moving, producing opposite deformation. This process repeats until
+dissipative forces dampen the motion, gradually reducing oscillation until the
+ruler comes to rest.
+
+The simplest oscillations occur when the restoring force is directly
+proportional to displacement. This relationship between force and displacement
+is Hooke's law:
+
+    F = −k x
+
+Here, F is the restoring force, x is displacement from equilibrium or
+deformation, and k is a constant related to deformation difficulty. The minus
+sign indicates the restoring force opposes displacement direction.
+
+The force constant k relates to system rigidity — larger force constants
+indicate greater restoring forces and stiffer systems. Units of k are newtons
+per meter (N/m). k is directly related to Young's modulus when stretching a
+string.
+
+## Energy in Hooke's Law of Deformation
+
+To produce deformation, work must be done. If no work converts to thermal,
+sound, or kinetic energy, all work is initially stored as potential energy.
+The potential energy stored in a spring is:
+
+    PE_el = ½ k x²
+
+where PE_el is elastic potential energy in any deformed system obeying Hooke's
+law, with displacement x from equilibrium and force constant k.
+
+Work performed by applied force F_app equals the area under a force-vs-
+deformation graph. Since force increases linearly from 0 to k x, average force
+is ½ k x, distance moved is x, thus W = ½ k x².
+
+### Example 16.1 — How Stiff Are Car Springs?
+
+Force constant of a suspension that settles 1.20 cm under an 80.0 kg person:
+weight w = m g = 80.0 × 9.80 = 784 N; from Hooke's law k = −F / x = −784 /
+(−1.20 × 10⁻²) = 6.53 × 10⁴ N/m. The car would oscillate were it not for
+damping from shock absorbers.
+
+### Example 16.2 — Calculating Stored Energy (Toy Gun Spring)
+
+For k = 50.0 N/m, x = 0.150 m:
+    PE_el = ½ k x² = ½ × 50.0 × (0.150)² = 0.563 J
+A 2.00 g projectile leaves at v = √(2 PE / m) = 23.7 m/s when potential
+energy converts entirely to kinetic energy.
+
+================================================================================
+# 16.2 Period and Frequency in Oscillations
+================================================================================
+
+When you pluck a guitar string, the resulting sound has a steady tone and lasts
+a long time. Each successive vibration of the string takes the same time as the
+previous one. We define periodic motion to be a motion that repeats itself at
+regular time intervals, such as the guitar string or an object on a spring
+moving up and down. The time to complete one oscillation remains constant and
+is called the period T. Its units are usually seconds.
+
+A concept closely related to period is the frequency of an event. For example,
+if you get a paycheck twice a month, the frequency of payment is two per month
+and the period between checks is half a month. Frequency f is defined to be the
+number of events per unit time. For periodic motion, frequency is the number of
+oscillations per unit time.
+
+The relationship between frequency and period is:
+
+    f = 1 / T          equivalently      T = 1 / f
+
+The SI unit for frequency is the cycle per second, defined to be a hertz (Hz):
+1 Hz = 1 cycle/s = 1/s. A cycle is one complete oscillation. A vibration can be
+a single or multiple event, whereas oscillations are usually repetitive for a
+significant number of cycles.
+
+### Example 16.3 — Determine the Frequency of Two Oscillations
+
+(a) Medical ultrasound oscillates with period 0.400 µs:
+    f = 1 / (0.400 × 10⁻⁶ s) = 2.50 × 10⁶ Hz — well above human hearing.
+
+(b) Middle C at f = 264 Hz has period:
+    T = 1 / f = 1 / 264 Hz = 3.79 × 10⁻³ s = 3.79 ms.
+
+================================================================================
+# 16.3 Simple Harmonic Motion: A Special Periodic Motion
+================================================================================
+
+Simple Harmonic Motion (SHM) describes oscillatory systems where the net force
+follows Hooke's law. The oscillations of a system in which the net force can be
+described by Hooke's law are of special importance, because they are very
+common.
+
+Without damping, a simple harmonic oscillator oscillates with equal
+displacement on either side of equilibrium. The maximum displacement is called
+the amplitude (X). Amplitude units depend on the oscillation type — meters for
+spring-mass systems, pressure units for sound.
+
+## Key Properties
+
+A significant characteristic of SHM is that period and frequency are
+independent of amplitude. The string of a guitar, for example, will oscillate
+with the same frequency whether plucked gently or hard.
+
+Two factors determine the period:
+  1. Spring stiffness (force constant k): stiffer systems have shorter periods.
+  2. Mass m: more massive systems have longer periods.
+
+In fact, the mass m and the force constant k are the only factors that affect
+the period and frequency of simple harmonic motion.
+
+## Period and Frequency Formulas
+
+The period of a simple harmonic oscillator is:
+
+    T = 2π √(m / k)
+
+The frequency is:
+
+    f = (1 / 2π) √(k / m)
+
+Neither T nor f depends on amplitude.
+
+### Example — Bad Shock Absorbers
+
+For a car with mass 900 kg and suspension force constant k = 6.53 × 10⁴ N/m:
+    f = (1 / 2π) √(6.53 × 10⁴ / 900) ≈ 1.36 Hz
+    T = 1 / f = 0.738 s
+
+## Link to Waves
+
+Simple harmonic motion creates wave patterns. If a bouncing car were
+photographed over time, the headlight would trace a wavelike streak. The
+displacement follows sine/cosine functions.
+
+## Mathematical Descriptions
+
+For any SHM where the restoring force follows Hooke's law:
+
+Displacement:
+    x(t) = X cos(2π t / T)              equivalently      x(t) = A cos(ω t)
+
+Velocity:
+    v(t) = −v_max sin(2π t / T)
+where v_max = 2π X / T = X √(k / m)
+
+Acceleration:
+    a(t) = −(k X / m) cos(2π t / T)
+
+Acceleration is directly proportional to and opposite in direction to
+displacement.
+
+## Check Your Understanding
+
+Q1. When a banjo string quiets over time, what changes?
+    A. Frequency and period remain essentially unchanged. Only amplitude
+    decreases as volume decreases.
+
+Q2. Where on a wave does maximum displacement occur?
+    A. Maximum displacement corresponds to the amplitude — at the wave's peak
+    or trough.
