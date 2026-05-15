@@ -1,3 +1,4 @@
+import { MathContent } from '@/components/aria/math-content';
 import { cn } from '@/lib/utils';
 
 interface WhiteboardSVGProps {
@@ -37,22 +38,19 @@ const baseLine = {
 } as const;
 
 /**
- * Pull the first <span class="hl-*">…</span> phrase out of step HTML so we
- * can render it as the chalkboard headline. Falls back to the first 40 chars
- * of plain text if no highlight token is present.
+ * Pull the first `<span class="hl-*">…</span>` phrase out of step HTML so
+ * we can render it as the chalkboard headline. Keeps the inner content
+ * including any LaTeX `$...$` so `MathContent` typesets it. Falls back
+ * to the first sentence of plain text when no highlight is present.
  */
 function extractHeadline(html: string, fallback: string): string {
   if (!html) return fallback;
   const hlMatch = html.match(/<span class="hl-[^"]*">([^<]+)<\/span>/);
   if (hlMatch?.[1]) return hlMatch[1].trim();
-  // Strip tags, strip LaTeX delimiters, take first short chunk.
-  const plain = html
-    .replace(/<[^>]+>/g, '')
-    .replace(/\$\$[^$]+\$\$/g, '')
-    .replace(/\$[^$]+\$/g, '')
-    .trim();
+  // Strip tags but PRESERVE LaTeX delimiters so the renderer can typeset.
+  const plain = html.replace(/<[^>]+>/g, '').trim();
   const firstChunk = plain.split(/[.?!]/)[0]?.trim() ?? plain;
-  return firstChunk.slice(0, 60);
+  return firstChunk.slice(0, 80);
 }
 
 /**
@@ -165,27 +163,35 @@ function GenericChalkboard({
         {stepLabel}
       </text>
 
-      {/* Big chalk headline — the highlighted phrase from this step. */}
-      <text
-        x="450"
-        y="280"
-        textAnchor="middle"
-        fill="var(--chalk)"
-        fontSize={headline.length > 28 ? 36 : 52}
-        fontFamily="Bricolage Grotesque, serif"
-        fontStyle="italic"
-        filter="url(#glow)"
-        style={{
-          transition: 'opacity .5s ease',
-        }}
-      >
-        {headline || '…'}
-      </text>
+      {/* Big chalk headline — uses a foreignObject so KaTeX can typeset
+          any `$...$` math inside the highlighted phrase. SVG `<text>`
+          cannot render LaTeX so we delegate to MathContent here. */}
+      <foreignObject x="60" y="200" width="780" height="180">
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--chalk)',
+            fontFamily: 'Bricolage Grotesque, serif',
+            fontStyle: 'italic',
+            textAlign: 'center',
+            lineHeight: 1.2,
+            filter: 'url(#glow)',
+            fontSize: headline.length > 60 ? 28 : headline.length > 28 ? 36 : 48,
+            padding: '0 20px',
+          }}
+        >
+          <MathContent html={headline || '…'} />
+        </div>
+      </foreignObject>
 
       {/* Subtle subline — invitation to listen / read the caption. */}
       <text
         x="450"
-        y="340"
+        y="420"
         textAnchor="middle"
         fill="rgba(255,255,255,.35)"
         fontSize="14"

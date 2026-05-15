@@ -273,6 +273,10 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
     tts.start({ text: s.tts, startMs: resumeFromMs });
     // Bookmark has been consumed — clear so subsequent step changes start fresh.
     if (resumeFromMs > 0) setBookmark(null);
+    // Warm the next step's TTS so the ~3-5s Gemini Live latency hides
+    // inside the current step's playback. Best-effort; muted users skip.
+    const nextStep = lessonSteps[step + 1];
+    if (nextStep) tts.prefetch(nextStep.tts);
     return () => tts.flush();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, playing, qaOpen, voiceOpen, sketchOn, quizMeOpen, muted]);

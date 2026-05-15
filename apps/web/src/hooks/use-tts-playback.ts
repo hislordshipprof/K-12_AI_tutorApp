@@ -68,6 +68,8 @@ export interface UseTtsPlaybackResult {
   flush: () => void;
   seek: (ms: number) => void;
   getCurrentMs: () => number;
+  /** Fetch + cache TTS for `text` so a later `start()` plays instantly. */
+  prefetch: (text: string) => void;
   // --- back-compat with the old useSpeak surface ---
   speak: (text: string) => void;
   stop: () => void;
@@ -153,10 +155,55 @@ export function useTtsPlayback({
   const audioUrlRef = useRef<string | null>(null);
   // Tracks the in-flight TTS fetch so a flush() can abort it before audio loads.
   const ttsAbortRef = useRef<AbortController | null>(null);
+  // Pre-fetch cache: text → blob URL. Hides the ~3-5s Gemini Live latency
+  // when the classroom shell warms up the next lesson step while the
+  // current one plays. Keeps last ~4 entries; oldest gets revoked.
+  const prefetchCacheRef = useRef<Map<string, string>>(new Map());
+  const PREFETCH_CACHE_MAX = 4;
   const startedAtRef = useRef<number>(0);
   const accumulatedMsRef = useRef<number>(0);
   const pausedRef = useRef<boolean>(false);
   const progressTimerRef = useRef<number | null>(null);
+
+  /** Internal — POST /v1/tts and return a blob URL. Used by both
+   *  `start()` (when cache misses) and `prefetch()` (warm-up). */
+  const fetchTtsBlobUrl = useCallback(
+    async (text: string, signal: AbortSignal): Promise<string> => {
+      const res = await fetch(`${apiBase}/v1/tts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'audio/wav',
+          ...(process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
+            ? { 'X-Dev-User-Id': '00000000-0000-0000-0000-000000000001' }
+            : {}),
+        },
+        body: JSON.stringify({ text }),
+        signal,
+      });
+      if (!res.ok) throw new Error(`tts ${res.status}`);
+      const blob = await res.blob();
+      return URL.createObjectURL(blob);
+    },
+    [],
+  );
+
+  /** Eject the oldest cache entry when we're at capacity. */
+  const trimPrefetchCache = useCallback(() => {
+    while (prefetchCacheRef.current.size > PREFETCH_CACHE_MAX) {
+      const oldestKey = prefetchCacheRef.current.keys().next().value;
+      if (oldestKey === undefined) break;
+      const url = prefetchCacheRef.current.get(oldestKey);
+      if (url) {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // ignored
+        }
+      }
+      prefetchCacheRef.current.delete(oldestKey);
+    }
+  }, []);
 
   const releaseAudio = useCallback(() => {
     const a = audioRef.current;
@@ -170,15 +217,44 @@ export function useTtsPlayback({
       }
     }
     audioRef.current = null;
+    // Only revoke the URL if it isn't sitting in the prefetch cache — a
+    // pre-warmed clip should survive its first play so a back-button or
+    // step-revisit still gets the cached version.
     if (audioUrlRef.current) {
-      try {
-        URL.revokeObjectURL(audioUrlRef.current);
-      } catch {
-        // ignored
+      const cached = Array.from(prefetchCacheRef.current.values()).includes(
+        audioUrlRef.current,
+      );
+      if (!cached) {
+        try {
+          URL.revokeObjectURL(audioUrlRef.current);
+        } catch {
+          // ignored
+        }
       }
       audioUrlRef.current = null;
     }
   }, []);
+
+  const prefetch = useCallback(
+    (text: string) => {
+      if (mutedRef.current) return;
+      const key = text.trim();
+      if (!key) return;
+      if (prefetchCacheRef.current.has(key)) return;
+      // Fire and forget. Aborts on unmount via the unmount cleanup.
+      const controller = new AbortController();
+      void fetchTtsBlobUrl(key, controller.signal)
+        .then((url) => {
+          prefetchCacheRef.current.set(key, url);
+          trimPrefetchCache();
+        })
+        .catch(() => {
+          // Prefetch errors are silent — the start() path will retry
+          // and fall back to speechSynthesis if the second attempt fails.
+        });
+    },
+    [fetchTtsBlobUrl, trimPrefetchCache],
+  );
 
   const elapsedMs = useCallback((): number => {
     if (pausedRef.current) return accumulatedMsRef.current;
@@ -334,22 +410,21 @@ export function useTtsPlayback({
 
       (async () => {
         try {
-          const res = await fetch(`${apiBase}/v1/tts`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Accept: 'audio/wav',
-              ...(process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
-                ? { 'X-Dev-User-Id': '00000000-0000-0000-0000-000000000001' }
-                : {}),
-            },
-            body: JSON.stringify({ text }),
-            signal: controller.signal,
-          });
-          if (!res.ok) throw new Error(`tts ${res.status}`);
-          const blob = await res.blob();
-          if (controller.signal.aborted) return;
-          const url = URL.createObjectURL(blob);
+          // Cache hit — a previous prefetch() warmed this clip. Skip
+          // the network round-trip entirely; playback starts in ms.
+          const cacheKey = text.trim();
+          let url: string;
+          const cached = prefetchCacheRef.current.get(cacheKey);
+          if (cached) {
+            url = cached;
+            // Remove from cache so a subsequent start() with the same
+            // text re-fetches (the blob URL gets revoked on releaseAudio
+            // unless it stays cached — but we want it played only once).
+            prefetchCacheRef.current.delete(cacheKey);
+          } else {
+            url = await fetchTtsBlobUrl(text, controller.signal);
+            if (controller.signal.aborted) return;
+          }
           audioUrlRef.current = url;
           const audio = new Audio(url);
           audio.preload = 'auto';
@@ -499,6 +574,15 @@ export function useTtsPlayback({
         ttsAbortRef.current = null;
       }
       releaseAudio();
+      // Revoke every cached prefetch URL — otherwise we leak blobs.
+      for (const url of prefetchCacheRef.current.values()) {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // ignored
+        }
+      }
+      prefetchCacheRef.current.clear();
       if (typeof window !== 'undefined' && window.speechSynthesis) {
         try {
           window.speechSynthesis.cancel();
@@ -537,6 +621,7 @@ export function useTtsPlayback({
     flush,
     seek,
     getCurrentMs,
+    prefetch,
     speak,
     stop,
     speaking,
