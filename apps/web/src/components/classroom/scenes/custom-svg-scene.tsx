@@ -12,10 +12,10 @@
  *   title?:    string                    — caption above the drawing
  *   elements?: PrimitiveSpec[]            — the drawing, in back-to-front order
  *
- * Each primitive (see PrimitiveSpec) is one of: line, polyline, path, rect,
- * circle, ellipse, polygon, text. Elements reveal in array order across the
- * audio clock: outline shapes "draw on" (stroke-dash), filled shapes and text
- * fade in.
+ * Each primitive (see PrimitiveSpec) is one of: line, arrow, polyline, path,
+ * rect, circle, ellipse, polygon, text. Elements reveal across the audio
+ * clock: outline shapes and arrows "draw on", filled shapes and text fade in.
+ * Elements sharing a `group` index reveal together; ungrouped ones sequence.
  */
 import { CHALK, revealWindow, type SceneComponent } from './types';
 
@@ -26,6 +26,8 @@ const COLORS: Record<string, string> = {
   pink: CHALK.pink,
   green: CHALK.green,
 };
+
+const ANCHORS = new Set(['start', 'middle', 'end']);
 
 /** Resolve a palette key → chalk colour; anything unknown → white. */
 function color(key: unknown): string {
@@ -45,6 +47,28 @@ function str(v: unknown, max = 240): string {
 
 type Rec = Record<string, unknown>;
 
+/**
+ * Assign each element a reveal "slot". Ungrouped elements get their own
+ * slot in order; elements sharing a `group` index share the first slot
+ * their group claimed — so a shape and its label can appear together.
+ */
+function revealSlots(elements: Rec[]): { slots: number[]; total: number } {
+  const slots: number[] = [];
+  const groupSlot = new Map<number, number>();
+  let next = 0;
+  for (const e of elements) {
+    const g = typeof e.group === 'number' ? e.group : null;
+    if (g !== null && groupSlot.has(g)) {
+      slots.push(groupSlot.get(g) as number);
+    } else {
+      const s = next++;
+      if (g !== null) groupSlot.set(g, s);
+      slots.push(s);
+    }
+  }
+  return { slots, total: Math.max(1, next) };
+}
+
 export const CustomSvgScene: SceneComponent = ({ progress, params }) => {
   const title = str(params.title, 80);
   const raw = Array.isArray(params.elements) ? params.elements : [];
@@ -52,9 +76,9 @@ export const CustomSvgScene: SceneComponent = ({ progress, params }) => {
     .filter((e): e is Rec => !!e && typeof e === 'object')
     .slice(0, 40);
 
-  // Title over [0, .1]; the drawing sequences across [.1, 1].
-  const n = Math.max(1, elements.length);
-  const span = 0.9 / n;
+  // Title over [0, .1]; the drawing sequences across [.1, 1] by slot.
+  const { slots, total } = revealSlots(elements);
+  const span = 0.9 / total;
 
   return (
     <g>
@@ -75,7 +99,7 @@ export const CustomSvgScene: SceneComponent = ({ progress, params }) => {
       ) : null}
 
       {elements.map((e, i) => {
-        const start = 0.1 + i * span;
+        const start = 0.1 + (slots[i] ?? i) * span;
         const local = revealWindow(progress, start, start + span * 1.1);
         if (local <= 0) return null;
 
@@ -85,6 +109,55 @@ export const CustomSvgScene: SceneComponent = ({ progress, params }) => {
           typeof e.fill === 'string' && e.fill !== 'none' && e.fill in COLORS;
         const fill = hasFill ? color(e.fill) : 'none';
         const dashed = e.dash === true;
+        // Optional per-element opacity — lets the model draw faint guides.
+        const alpha = num(e.opacity, 1, 0, 1);
+
+        const kind = str(e.el, 16);
+
+        // Arrows draw their shaft endpoint-first and pop the head at the end.
+        if (kind === 'arrow') {
+          const x1 = num(e.x1, 0);
+          const y1 = num(e.y1, 0);
+          const x2 = num(e.x2, 0);
+          const y2 = num(e.y2, 0);
+          const dx = x2 - x1;
+          const dy = y2 - y1;
+          const len = Math.hypot(dx, dy) || 1;
+          const ux = dx / len;
+          const uy = dy / len;
+          const px = -uy;
+          const py = ux;
+          const head = 9 + strokeWidth;
+          const tipX = x1 + dx * local;
+          const tipY = y1 + dy * local;
+          const headAlpha =
+            Math.max(0, Math.min(1, (local - 0.82) / 0.18)) * alpha;
+          return (
+            <g key={i}>
+              <line
+                x1={x1}
+                y1={y1}
+                x2={tipX}
+                y2={tipY}
+                stroke={stroke}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                opacity={alpha}
+                filter="url(#chalk)"
+              />
+              <polygon
+                points={
+                  `${x2},${y2} ` +
+                  `${x2 - ux * head + px * head * 0.5},${y2 - uy * head + py * head * 0.5} ` +
+                  `${x2 - ux * head - px * head * 0.5},${y2 - uy * head - py * head * 0.5}`
+                }
+                fill={stroke}
+                opacity={headAlpha}
+                filter="url(#chalk)"
+              />
+            </g>
+          );
+        }
 
         // Outline primitives "draw on" via a normalised stroke-dash; filled
         // shapes and text just fade in. pathLength=1 lets us animate any
@@ -97,7 +170,7 @@ export const CustomSvgScene: SceneComponent = ({ progress, params }) => {
               strokeDashoffset: dashed ? 0 : 1 - local,
             }
           : { strokeDasharray: dashed ? '6 5' : undefined };
-        const opacity = drawOn ? 1 : local;
+        const opacity = (drawOn ? 1 : local) * alpha;
 
         const common = {
           stroke,
@@ -109,7 +182,7 @@ export const CustomSvgScene: SceneComponent = ({ progress, params }) => {
           strokeLinejoin: 'round' as const,
         };
 
-        switch (str(e.el, 16)) {
+        switch (kind) {
           case 'line':
             return (
               <line
@@ -185,23 +258,28 @@ export const CustomSvgScene: SceneComponent = ({ progress, params }) => {
                 {...drawProps}
               />
             );
-          case 'text':
+          case 'text': {
+            const anchor = str(e.textAnchor, 8);
+            const textAnchor: 'start' | 'middle' | 'end' = ANCHORS.has(anchor)
+              ? (anchor as 'start' | 'middle' | 'end')
+              : 'middle';
             return (
               <text
                 key={i}
                 x={num(e.x, 0)}
                 y={num(e.y, 0)}
-                textAnchor="middle"
+                textAnchor={textAnchor}
                 fill={stroke}
                 fontSize={num(e.fontSize, 18, 8, 48)}
                 fontFamily="Bricolage Grotesque, serif"
                 fontStyle="italic"
                 filter="url(#chalk)"
-                opacity={local}
+                opacity={local * alpha}
               >
                 {str(e.text, 120)}
               </text>
             );
+          }
           default:
             return null;
         }

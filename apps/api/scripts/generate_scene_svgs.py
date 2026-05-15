@@ -48,8 +48,10 @@ log = get_logger(__name__)
 # this schema is the *first* of two validation gates, not the only one.
 
 _PALETTE = {"white", "blue", "yellow", "pink", "green"}
+_ANCHORS = {"start", "middle", "end"}
 _ELEMENTS = {
     "line",
+    "arrow",
     "polyline",
     "path",
     "rect",
@@ -63,8 +65,11 @@ _ELEMENTS = {
 class Primitive(BaseModel):
     """One drawing element. Only the fields relevant to `el` are read."""
 
-    el: str = Field(description="One of: line polyline path rect circle ellipse polygon text")
-    # geometry — all optional; the renderer defaults missing ones to 0
+    el: str = Field(
+        description="One of: line arrow polyline path rect circle ellipse polygon text"
+    )
+    # geometry — all optional; the renderer defaults missing ones to 0.
+    # arrow uses x1,y1 (tail) → x2,y2 (head); arrowhead is drawn for you.
     x: float | None = None
     y: float | None = None
     x1: float | None = None
@@ -87,8 +92,18 @@ class Primitive(BaseModel):
     fill: str | None = Field(default=None, description="palette key, or 'none'")
     strokeWidth: float | None = None
     dash: bool | None = None
+    opacity: float | None = Field(
+        default=None, description="0-1; use <1 for faint guide shapes"
+    )
     text: str | None = Field(default=None, description="caption, only for el=text")
     fontSize: float | None = None
+    textAnchor: str | None = Field(
+        default=None, description="text only: start | middle | end"
+    )
+    group: int | None = Field(
+        default=None,
+        description="elements with the same group index reveal together",
+    )
 
 
 class SceneDrawing(BaseModel):
@@ -110,7 +125,7 @@ Keep your elements within x: 60-840, y: 190-500.
 
 OUTPUT: a flat list of 6-22 drawing primitives, in back-to-front order \
 (background shapes first, labels last). Each primitive is one of: line, \
-polyline, path, rect, circle, ellipse, polygon, text.
+arrow, polyline, path, rect, circle, ellipse, polygon, text.
 
 RULES:
 - Schematic, not detailed. Think a teacher's quick board sketch: a few shapes \
@@ -119,9 +134,19 @@ and 2-5 short text labels. Never more than 22 elements.
 for structure, colours for emphasis. Default stroke is white.
 - For an outline shape set fill to "none" (it then "draws on"); set a palette \
 fill only for a solid shape.
-- text elements: short labels (1-3 words). Put the label NEXT TO what it \
-names. No LaTeX, no math symbols that need typesetting — plain words and \
-simple units only.
+- Use an `arrow` (x1,y1 tail -> x2,y2 head) for forces, motion, flow, and for \
+pointing a label at the part it names — the arrowhead is drawn for you, so \
+never build one by hand from a polygon.
+- Set `opacity` below 1 (e.g. 0.35) on faint guide lines or background shapes \
+so the key parts of the drawing stand out.
+- text elements: short labels (1-3 words). EVERY text element MUST include \
+both `x` and `y` — a label with no coordinates is dropped. Put the label \
+NEXT TO what it names and set `textAnchor` so it sits cleanly — `end` for a \
+label to the LEFT of its target, `start` for a label to the RIGHT, `middle` \
+above/below. No LaTeX, no math symbols that need typesetting — plain words \
+and simple units only.
+- Give a shape and its label the SAME `group` number so they reveal \
+together; leave `group` off to reveal an element on its own.
 - Use coordinates that actually fit the canvas. Center the drawing.
 - Do NOT restate the lesson text. Draw the concept.
 
@@ -179,12 +204,20 @@ def _clean_element(p: Primitive) -> dict | None:
         out["fill"] = p.fill
     if p.dash is True:
         out["dash"] = True
+    if isinstance(p.opacity, (int, float)) and 0 <= p.opacity <= 1:
+        out["opacity"] = float(p.opacity)
+    if p.el == "text" and isinstance(p.textAnchor, str) and p.textAnchor in _ANCHORS:
+        out["textAnchor"] = p.textAnchor
+    if isinstance(p.group, int) and not isinstance(p.group, bool) and 0 <= p.group <= 40:
+        out["group"] = p.group
 
-    # An element with no usable geometry is dead weight.
+    # An element with no usable geometry is dead weight. A text label needs
+    # both coords or it piles up unplaceable at the canvas origin.
     geom_keys = {"x", "y", "x1", "x2", "cx", "d", "points"}
-    if p.el == "text" and not out.get("text"):
-        return None
-    if p.el != "text" and not (geom_keys & out.keys()):
+    if p.el == "text":
+        if not out.get("text") or "x" not in out or "y" not in out:
+            return None
+    elif not (geom_keys & out.keys()):
         return None
     return out
 
@@ -318,7 +351,17 @@ async def _run(args: argparse.Namespace) -> int:
 
             processed += 1
             try:
-                params = await _draw_step(gemini, model, topic_name, step_text)
+                # Hard ceiling so one stuck model call can't hang the run.
+                params = await asyncio.wait_for(
+                    _draw_step(gemini, model, topic_name, step_text),
+                    timeout=90,
+                )
+            except (asyncio.TimeoutError, TimeoutError):
+                print(
+                    f"[scene-svg] {topic_name!r} step {i}: timed out, skipped",
+                    file=sys.stderr,
+                )
+                continue
             except Exception as exc:  # noqa: BLE001
                 print(
                     f"[scene-svg] {topic_name!r} step {i}: model error — {exc}",
