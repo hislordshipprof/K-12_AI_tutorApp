@@ -57,6 +57,7 @@ def _empty_profile(user_id: str) -> dict[str, Any]:
             "time_spent_min": 0,
             "quiz_avg_pct": None,
         },
+        "last_topic": None,
     }
 
 
@@ -138,6 +139,70 @@ async def get_me(
     except Exception as e:  # noqa: BLE001
         log.debug("me_streak_rpc_failed", error=str(e))
 
+    # 4. Last-active topic — drives the dashboard "Pick up where you left
+    # off" hero. We pick the most-recent lesson_sessions row that's still
+    # open OR the most recently created, then expand the topic for the
+    # title + duration.
+    last_topic: dict[str, Any] | None = None
+    try:
+        sess_resp = (
+            supabase.table("lesson_sessions")
+            .select("topic_id,started_at,ended_at")
+            .eq("user_id", str_id)
+            .order("started_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        sess_rows = getattr(sess_resp, "data", None) or []
+        if sess_rows and sess_rows[0].get("topic_id"):
+            top_id = sess_rows[0]["topic_id"]
+            t_resp = (
+                supabase.table("topics")
+                .select("id,name,duration_min,unit_id")
+                .eq("id", top_id)
+                .limit(1)
+                .execute()
+            )
+            t_rows = getattr(t_resp, "data", None) or []
+            if t_rows:
+                t = t_rows[0]
+                unit_n: int | None = None
+                unit_name: str | None = None
+                course_slug: str | None = None
+                if t.get("unit_id"):
+                    u_resp = (
+                        supabase.table("units")
+                        .select("n,name,course_id")
+                        .eq("id", t["unit_id"])
+                        .limit(1)
+                        .execute()
+                    )
+                    u_rows = getattr(u_resp, "data", None) or []
+                    if u_rows:
+                        unit_n = u_rows[0].get("n")
+                        unit_name = u_rows[0].get("name")
+                        if u_rows[0].get("course_id"):
+                            c_resp = (
+                                supabase.table("courses")
+                                .select("slug,title")
+                                .eq("id", u_rows[0]["course_id"])
+                                .limit(1)
+                                .execute()
+                            )
+                            c_rows = getattr(c_resp, "data", None) or []
+                            if c_rows:
+                                course_slug = c_rows[0].get("slug")
+                last_topic = {
+                    "id": t["id"],
+                    "name": t["name"],
+                    "duration_min": t.get("duration_min"),
+                    "unit_n": unit_n,
+                    "unit_name": unit_name,
+                    "course_slug": course_slug,
+                }
+    except Exception as e:  # noqa: BLE001
+        log.warning("me_last_topic_lookup_failed", error=str(e))
+
     return {
         "id": str_id,
         "full_name": profile.get("full_name"),
@@ -148,4 +213,5 @@ async def get_me(
             "time_spent_min": round(time_spent_s / 60),
             "quiz_avg_pct": quiz_avg_pct,
         },
+        "last_topic": last_topic,
     }

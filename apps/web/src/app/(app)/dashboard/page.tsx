@@ -133,7 +133,17 @@ export default function DashboardPage() {
   const today = todayISODate();
   const todayBlocks = (planner?.blocks ?? []).filter((b) => b.date === today);
 
-  const goClassroom = () => router.push('/classroom/wave-properties-anatomy');
+  // "Pick up where you left off" — routes to the user's most-recent topic
+  // when we have one, falls back to the prototype slug otherwise so the
+  // demo path still works pre-first-session.
+  const resumeTopic = me?.last_topic ?? null;
+  const goClassroom = () => {
+    if (resumeTopic?.id) {
+      router.push(`/classroom/${resumeTopic.id}`);
+    } else {
+      router.push('/classroom/wave-properties-anatomy');
+    }
+  };
 
   return (
     <div className="bg-paper">
@@ -236,10 +246,22 @@ export default function DashboardPage() {
               Pick up where you left off
             </div>
             <div className="relative mb-1 font-display text-[22px] font-bold leading-[1.15] tracking-[-0.015em]">
-              Oscillations: Amplitude, Period &amp; Frequency
+              {resumeTopic?.name ?? 'Start your first lesson'}
             </div>
             <div className="relative mb-4 text-[13px] opacity-85">
-              AP Physics 1 · Unit 7 · 18 min
+              {resumeTopic
+                ? [
+                    resumeTopic.course_slug
+                      ?.replace(/^ap-/, 'AP ')
+                      .replace(/-/g, ' ')
+                      .replace(/\b\w/g, (c) => c.toUpperCase())
+                      .replace('Bc', 'BC'),
+                    resumeTopic.unit_n ? `Unit ${resumeTopic.unit_n}` : null,
+                    resumeTopic.duration_min ? `${resumeTopic.duration_min} min` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                : 'Pick any topic below to begin'}
             </div>
             <div className="relative mb-4 h-1 overflow-hidden rounded-[2px] bg-white/[0.18]">
               <div

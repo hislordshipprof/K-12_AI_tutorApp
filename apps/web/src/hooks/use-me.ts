@@ -16,12 +16,22 @@ export interface MeStats {
   quiz_avg_pct: number | null;
 }
 
+export interface LastTopic {
+  id: string;
+  name: string;
+  duration_min: number | null;
+  unit_n: number | null;
+  unit_name: string | null;
+  course_slug: string | null;
+}
+
 export interface MeProfile {
   id: string;
   full_name: string | null;
   avatar_color: string;
   streak_days: number;
   stats: MeStats;
+  last_topic: LastTopic | null;
 }
 
 export function useMe() {
