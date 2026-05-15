@@ -79,6 +79,50 @@ export interface UseTtsPlaybackResult {
  */
 const CHARS_PER_MS = 0.014;
 
+/**
+ * Pick the most natural-sounding voice the browser ships with. The order
+ * matches subjective quality (most natural → least): Microsoft Online
+ * neural voices, Google "Natural" / "Wavenet" voices, then any "Aria" /
+ * "Jenny" / "Samantha" preset, then anything female-flagged, finally the
+ * first English voice we can find. Falls back to the platform default.
+ */
+function pickNaturalVoice(): SpeechSynthesisVoice | null {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length === 0) return null;
+
+  const matchers: Array<(v: SpeechSynthesisVoice) => boolean> = [
+    // Top-tier: Microsoft Edge neural voices (Aria, Sonia, Jenny, Libby).
+    (v) => /Microsoft.+(Aria|Sonia|Jenny|Libby|Emma|Ava).+Online/i.test(v.name),
+    (v) => /Microsoft.+Online.+Natural/i.test(v.name),
+    // Google Wavenet / Neural voices (Chrome on some platforms).
+    (v) => /Google.+(Wavenet|Neural|Studio)/i.test(v.name),
+    // Any voice that self-identifies as "Natural" / "Neural".
+    (v) => /Natural|Neural/i.test(v.name),
+    // Apple's premium voices.
+    (v) => /Samantha|Ava|Allison|Karen/i.test(v.name) && /en/i.test(v.lang),
+    // Aria-themed presets.
+    (v) => /aria/i.test(v.name) && /en/i.test(v.lang),
+    // Any English female voice.
+    (v) => /female/i.test(v.name) && /en/i.test(v.lang),
+    // Windows SAPI: Zira is the cleanest female of the legacy trio
+    // (David/Mark/Zira). Beats falling through to David which sounds
+    // particularly synthetic. NOTE: this is still robotic — installing
+    // a neural voice package (Edge → Settings → Languages → English →
+    // Speech → "Microsoft Aria — Online") gives a dramatically better
+    // result and the matchers above will pick it up automatically.
+    (v) => /\bZira\b/i.test(v.name),
+    // Any English voice at all.
+    (v) => /en[-_]?US|en[-_]?GB|en$/i.test(v.lang),
+  ];
+
+  for (const test of matchers) {
+    const found = voices.find(test);
+    if (found) return found;
+  }
+  return voices[0] ?? null;
+}
+
 export function useTtsPlayback({
   muted,
   rate = 1,
@@ -174,12 +218,12 @@ export function useTtsPlayback({
         }
 
         const u = new SpeechSynthesisUtterance(effectiveText);
-        u.rate = rateRef.current;
-        u.pitch = 1.04;
+        // Slightly slower + neutral pitch is more "teacherly" than the
+        // platform default of rate=1, pitch=1.04 which sounded chipper.
+        u.rate = Math.max(0.85, rateRef.current * 0.92);
+        u.pitch = 1.0;
         u.volume = 1;
-        const voices = window.speechSynthesis.getVoices();
-        const pref =
-          voices.find((v) => /female|samantha|google.*us|jenny|aria/i.test(v.name)) ?? voices[0];
+        const pref = pickNaturalVoice();
         if (pref) u.voice = pref;
 
         accumulatedMsRef.current = startMs;
@@ -267,6 +311,22 @@ export function useTtsPlayback({
         window.clearInterval(progressTimerRef.current);
         progressTimerRef.current = null;
       }
+    };
+  }, []);
+
+  // Prime the speech-synthesis voice list on mount. Chrome populates
+  // `getVoices()` asynchronously the first time, so without this our
+  // initial `start()` call would fall back to the default robotic voice.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    // Triggers the lazy load.
+    window.speechSynthesis.getVoices();
+    const handler = () => {
+      window.speechSynthesis.getVoices();
+    };
+    window.speechSynthesis.addEventListener('voiceschanged', handler);
+    return () => {
+      window.speechSynthesis.removeEventListener('voiceschanged', handler);
     };
   }, []);
 

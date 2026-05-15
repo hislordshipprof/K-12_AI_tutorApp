@@ -4,6 +4,26 @@ interface WhiteboardSVGProps {
   /** 0-7. 0 is the "preparing" placeholder. */
   step?: number;
   className?: string;
+  /**
+   * Which scene to draw on the chalkboard.
+   *   - `waves`   — the prototype's 8-step wave-properties scene (wave, λ,
+   *                 amplitude, v=f·λ etc.). Used by the wave-properties demo
+   *                 slug and the Oscillations topic.
+   *   - `generic` — clean chalkboard backdrop. Pulls the highlighted phrase
+   *                 from the current step's HTML and renders it big-and-chalky.
+   *                 Used for every other real DB topic so we don't render
+   *                 wave imagery on a Kinematics or Cell Biology lesson.
+   */
+  kind?: 'waves' | 'generic';
+  /**
+   * Current step HTML (only consulted when `kind === 'generic'`). We grab
+   * the first `<span class="hl-*">…</span>` token as the chalk headline.
+   */
+  stepHtml?: string;
+  /** Current step's plain caption — used as fallback when no highlight. */
+  stepTts?: string;
+  /** Topic title for the watermark on generic chalkboard. */
+  topicTitle?: string;
 }
 
 const WAVE_D =
@@ -17,15 +37,38 @@ const baseLine = {
 } as const;
 
 /**
- * Animated chalk-on-blackboard SVG for the wave-properties lesson.
- *
- * 8 steps (0–7) layered as <g class="wb-step"> elements; only the active
- * step is `display: block`, the rest stay hidden. The chalk roughness
- * comes from a single `<filter id="chalk">` (turbulence + displacement).
- *
- * Ported verbatim from prototype `whiteboard.jsx` `WhiteboardSVG`.
+ * Pull the first <span class="hl-*">…</span> phrase out of step HTML so we
+ * can render it as the chalkboard headline. Falls back to the first 40 chars
+ * of plain text if no highlight token is present.
  */
-export function WhiteboardSVG({ step = 0, className }: WhiteboardSVGProps) {
+function extractHeadline(html: string, fallback: string): string {
+  if (!html) return fallback;
+  const hlMatch = html.match(/<span class="hl-[^"]*">([^<]+)<\/span>/);
+  if (hlMatch?.[1]) return hlMatch[1].trim();
+  // Strip tags, strip LaTeX delimiters, take first short chunk.
+  const plain = html
+    .replace(/<[^>]+>/g, '')
+    .replace(/\$\$[^$]+\$\$/g, '')
+    .replace(/\$[^$]+\$/g, '')
+    .trim();
+  const firstChunk = plain.split(/[.?!]/)[0]?.trim() ?? plain;
+  return firstChunk.slice(0, 60);
+}
+
+/**
+ * Chalk-on-blackboard SVG. Two render modes: the wave-properties scene
+ * (legacy prototype + Oscillations) and a generic chalkboard that shows the
+ * lesson's current key phrase. Both share the chalk turbulence filter so
+ * the texture is consistent across topics.
+ */
+export function WhiteboardSVG({
+  step = 0,
+  className,
+  kind = 'waves',
+  stepHtml,
+  stepTts,
+  topicTitle,
+}: WhiteboardSVGProps) {
   return (
     <svg
       viewBox="0 0 900 530"
@@ -59,6 +102,106 @@ export function WhiteboardSVG({ step = 0, className }: WhiteboardSVGProps) {
         </filter>
       </defs>
 
+      {kind === 'generic' ? (
+        <GenericChalkboard
+          step={step}
+          stepHtml={stepHtml}
+          stepTts={stepTts}
+          topicTitle={topicTitle}
+        />
+      ) : (
+        <WavesScene step={step} />
+      )}
+    </svg>
+  );
+}
+
+// ── Generic chalkboard — shows the lesson's current highlighted phrase ────
+function GenericChalkboard({
+  step,
+  stepHtml,
+  stepTts,
+  topicTitle,
+}: {
+  step: number;
+  stepHtml?: string;
+  stepTts?: string;
+  topicTitle?: string;
+}) {
+  const headline = extractHeadline(stepHtml ?? '', stepTts ?? '');
+  const stepLabel = step === 0 ? 'Preparing…' : `Step ${step}`;
+
+  return (
+    <g>
+      {/* Faint horizontal chalk guideline so the board doesn't feel empty. */}
+      <line x1="60" y1="265" x2="840" y2="265" {...baseLine} stroke="rgba(255,255,255,.08)" />
+
+      {/* Topic watermark — top-left corner, italic, low-contrast. */}
+      {topicTitle ? (
+        <text
+          x="60"
+          y="60"
+          fill="rgba(255,255,255,.22)"
+          fontSize="14"
+          fontFamily="Bricolage Grotesque, serif"
+          fontStyle="italic"
+          filter="url(#chalk)"
+        >
+          {topicTitle}
+        </text>
+      ) : null}
+
+      {/* Step counter — top-right, small. */}
+      <text
+        x="840"
+        y="60"
+        textAnchor="end"
+        fill="rgba(255,255,255,.28)"
+        fontSize="13"
+        fontWeight="700"
+        fontFamily="DM Sans, sans-serif"
+        filter="url(#chalk)"
+      >
+        {stepLabel}
+      </text>
+
+      {/* Big chalk headline — the highlighted phrase from this step. */}
+      <text
+        x="450"
+        y="280"
+        textAnchor="middle"
+        fill="var(--chalk)"
+        fontSize={headline.length > 28 ? 36 : 52}
+        fontFamily="Bricolage Grotesque, serif"
+        fontStyle="italic"
+        filter="url(#glow)"
+        style={{
+          transition: 'opacity .5s ease',
+        }}
+      >
+        {headline || '…'}
+      </text>
+
+      {/* Subtle subline — invitation to listen / read the caption. */}
+      <text
+        x="450"
+        y="340"
+        textAnchor="middle"
+        fill="rgba(255,255,255,.35)"
+        fontSize="14"
+        fontFamily="Bricolage Grotesque, serif"
+        fontStyle="italic"
+      >
+        {step === 0 ? 'Aria is loading the lesson' : 'Aria is explaining — read the caption below'}
+      </text>
+    </g>
+  );
+}
+
+// ── Waves scene — the legacy 8-step prototype board ───────────────────────
+function WavesScene({ step }: { step: number }) {
+  return (
+    <>
       {/* STEP 0: blank with placeholder */}
       <g className={cn('wb-step', step === 0 && 'active')}>
         <text
@@ -639,6 +782,6 @@ export function WhiteboardSVG({ step = 0, className }: WhiteboardSVGProps) {
           ∴ v = 5 × 2 = 10 m/s
         </text>
       </g>
-    </svg>
+    </>
   );
 }

@@ -178,6 +178,23 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
     }
     return LESSON_STEPS;
   }, [topic.content]);
+  // The hand-drawn wave SVG is only meaningful for the wave-properties
+  // prototype demo + the closely-related Oscillations topic. Everything
+  // else gets a generic chalkboard that surfaces the current step's
+  // highlighted phrase, so a Kinematics lesson doesn't render a sine
+  // wave on the board.
+  const whiteboardKind: 'waves' | 'generic' = useMemo(() => {
+    const t = topic.title.toLowerCase();
+    if (
+      topic.slug === 'wave-properties-anatomy' ||
+      t.includes('wave') ||
+      t.includes('oscillation')
+    ) {
+      return 'waves';
+    }
+    return 'generic';
+  }, [topic.slug, topic.title]);
+
   const stepTitles: string[] = useMemo(() => {
     if (topic.content && topic.content.length > 0) {
       return topic.content.map((s, i) => {
@@ -444,7 +461,13 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
 
         {/* WHITEBOARD */}
         <div className="cr-board">
-          <WhiteboardSVG step={step} />
+          <WhiteboardSVG
+            step={step}
+            kind={whiteboardKind}
+            stepHtml={lessonSteps[step]?.html}
+            stepTts={lessonSteps[step]?.tts}
+            topicTitle={topic.title}
+          />
         </div>
 
         {/* SKETCH LAYER */}
