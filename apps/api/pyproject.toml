@@ -42,6 +42,11 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.13",
     "types-PyJWT>=1.7",
+    # psycopg drives the cross-tenant RLS tests (tests/test_teacher_rls.py),
+    # which need a direct Postgres connection to `set role authenticated` —
+    # the Supabase REST client cannot do that. The tests skip cleanly when no
+    # DATABASE_URL is set, so this dependency is only exercised on demand.
+    "psycopg[binary]>=3.2",
 ]
 
 [tool.setuptools.packages.find]
