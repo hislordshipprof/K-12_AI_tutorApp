@@ -5,6 +5,10 @@
 set +e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# venv binary dir differs by platform: POSIX -> .venv/bin, Windows -> .venv/Scripts
+API_VENV="$ROOT/apps/api/.venv/bin"
+[ -d "$ROOT/apps/api/.venv/Scripts" ] && API_VENV="$ROOT/apps/api/.venv/Scripts"
+
 PASS=0
 FAIL=()
 
@@ -32,10 +36,10 @@ check "pgvector enabled" sh -c "grep -liq 'create extension.*vector' $ROOT/supab
 # ── API ────────────────────────────────────────────────
 check "API pyproject.toml" test -f "$ROOT/apps/api/pyproject.toml"
 check "google-genai in deps" sh -c "grep -q 'google-genai' $ROOT/apps/api/pyproject.toml"
-check "API package importable" sh -c "cd $ROOT/apps/api && .venv/bin/python -c 'import app.main' 2>&1"
-check "API tests pass" sh -c "cd $ROOT/apps/api && .venv/bin/pytest -q 2>&1 | tail -3"
+check "API package importable" sh -c "cd $ROOT/apps/api && '$API_VENV/python' -c 'import app.main' 2>&1"
+check "API tests pass" sh -c "cd $ROOT/apps/api && '$API_VENV/pytest' -q 2>&1 | tail -3"
 check "API starts (smoke)" bash -c "
-  cd $ROOT/apps/api && .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 18001 > /tmp/verify-api-1.log 2>&1 &
+  cd $ROOT/apps/api && '$API_VENV/uvicorn' app.main:app --host 127.0.0.1 --port 18001 > /tmp/verify-api-1.log 2>&1 &
   PID=\$!
   sleep 4
   curl -sf http://127.0.0.1:18001/health > /tmp/health1.json

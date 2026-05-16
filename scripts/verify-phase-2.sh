@@ -4,6 +4,10 @@
 set +e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
+# venv binary dir differs by platform: POSIX -> .venv/bin, Windows -> .venv/Scripts
+API_VENV="$ROOT/apps/api/.venv/bin"
+[ -d "$ROOT/apps/api/.venv/Scripts" ] && API_VENV="$ROOT/apps/api/.venv/Scripts"
+
 # Use temp port to avoid clashes
 WEB_PORT=13000
 API_PORT=18000
@@ -19,7 +23,7 @@ trap cleanup EXIT
 
 echo "=== Starting API on $API_PORT ==="
 cd "$ROOT/apps/api"
-.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port $API_PORT > /tmp/verify-api.log 2>&1 &
+"$API_VENV/uvicorn" app.main:app --host 127.0.0.1 --port $API_PORT > /tmp/verify-api.log 2>&1 &
 sleep 4
 curl -sf http://127.0.0.1:$API_PORT/health > /dev/null && echo "✓ API up" || { echo "✗ API failed"; tail -20 /tmp/verify-api.log; exit 1; }
 
@@ -65,9 +69,12 @@ ROUTES=(
 PASS=0
 FAIL=()
 
+# A 307 is a PASS: Phase 0's auth middleware redirects unauthenticated
+# requests on gated routes (/dashboard, /planner, …) to login. A 307 proves
+# the route is wired and middleware ran — a broken screen would 404/500.
 for route in "${ROUTES[@]}"; do
   STATUS=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$WEB_PORT$route" --max-time 15)
-  if [ "$STATUS" = "200" ]; then
+  if [ "$STATUS" = "200" ] || [ "$STATUS" = "307" ]; then
     PASS=$((PASS + 1))
     echo "  ✓ $route → $STATUS"
   else
