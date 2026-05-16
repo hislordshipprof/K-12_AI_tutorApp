@@ -31,9 +31,9 @@ class Settings(BaseSettings):
     gemini_model_text: str = Field(default="gemini-3.1-flash-lite", alias="GEMINI_MODEL_TEXT")
     gemini_model_vision: str = Field(default="gemini-3.1-flash-lite", alias="GEMINI_MODEL_VISION")
     gemini_model_live: str = Field(
-        default="gemini-2.5-flash-native-audio-latest", alias="GEMINI_MODEL_LIVE"
+        default="gemini-3.1-flash-live-preview", alias="GEMINI_MODEL_LIVE"
     )
-    gemini_model_pro: str = Field(default="gemini-pro-latest", alias="GEMINI_MODEL_PRO")
+    gemini_model_pro: str = Field(default="gemini-3.1-pro-preview", alias="GEMINI_MODEL_PRO")
     gemini_model_embed: str = Field(
         default="gemini-embedding-2", alias="GEMINI_MODEL_EMBED"
     )

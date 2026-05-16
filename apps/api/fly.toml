@@ -23,11 +23,11 @@ primary_region = "iad"     # Virginia — close to most US users; change if need
   API_HOST = "0.0.0.0"
   API_PORT = "8000"
   LOG_LEVEL = "INFO"
-  GEMINI_MODEL_TEXT = "gemini-2.5-flash"
-  GEMINI_MODEL_VISION = "gemini-2.5-flash"
-  GEMINI_MODEL_LIVE = "gemini-2.5-flash-native-audio-latest"
-  GEMINI_MODEL_PRO = "gemini-2.5-pro"
-  GEMINI_MODEL_EMBED = "gemini-embedding-001"
+  GEMINI_MODEL_TEXT = "gemini-3.1-flash-lite"
+  GEMINI_MODEL_VISION = "gemini-3.1-flash-lite"
+  GEMINI_MODEL_LIVE = "gemini-3.1-flash-live-preview"
+  GEMINI_MODEL_PRO = "gemini-3.1-pro-preview"
+  GEMINI_MODEL_EMBED = "gemini-embedding-2"
 
 [http_service]
   internal_port = 8000

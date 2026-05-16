@@ -26,6 +26,7 @@ os.environ.setdefault("DEV_MODE", "true")
 from app.content import cli, generator, persister, validator  # noqa: E402
 from app.content.chunker import Chunk  # noqa: E402
 from app.content.schema import LessonContent, LessonStep  # noqa: E402
+from app.core.config import settings  # noqa: E402
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
@@ -186,8 +187,9 @@ async def test_generator_returns_parsed_lesson(monkeypatch: pytest.MonkeyPatch) 
 
     class _FakeModels:
         async def generate_content(self, **kwargs: Any) -> Any:
-            # Sanity-check the call shape.
-            assert kwargs["model"] in ("gemini-pro-latest", "gemini-pro")
+            # Sanity-check the call shape — the generator passes the
+            # configured PRO model, whatever it is pinned to.
+            assert kwargs["model"] == settings.gemini_model_pro
             cfg = kwargs["config"]
             assert cfg["response_schema"] is LessonContent
             assert cfg["response_mime_type"] == "application/json"

@@ -255,7 +255,8 @@ def main() -> int:
 
     client = genai.Client(api_key=api_key)
 
-    model_name = os.environ.get("GEMINI_MODEL_PRO", "gemini-pro-latest")
+    # Pinned fallback — never a moving *-latest alias on a provenance path (M.3).
+    model_name = os.environ.get("GEMINI_MODEL_PRO", "gemini-3.1-pro-preview")
 
     config = genai_types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
