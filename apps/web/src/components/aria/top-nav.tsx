@@ -23,6 +23,11 @@ export interface TopNavProps {
   onAvatar?: () => void;
   /** Extra content slotted before the streak/avatar pair. */
   right?: ReactNode;
+  /**
+   * Hide the built-in avatar button. Use when the caller renders its own
+   * account control (e.g. the dropdown `AccountMenu`) via `right`.
+   */
+  hideAvatar?: boolean;
 }
 
 /**
@@ -39,6 +44,7 @@ export function TopNav({
   name = 'Alex',
   onAvatar,
   right,
+  hideAvatar = false,
 }: TopNavProps) {
   return (
     <nav
@@ -104,18 +110,20 @@ export function TopNav({
             <span>{streak} day</span>
           </div>
         )}
-        <button
-          type="button"
-          onClick={onAvatar}
-          className={cn(
-            'grid h-9 w-9 cursor-pointer place-items-center rounded-full border-2 text-[13px] font-bold text-white shadow-md',
-            'bg-gradient-to-br from-coral to-amber',
-            dark ? 'border-board' : 'border-white',
-          )}
-          aria-label={`${name} — account menu`}
-        >
-          {name.slice(0, 2).toUpperCase()}
-        </button>
+        {!hideAvatar && (
+          <button
+            type="button"
+            onClick={onAvatar}
+            className={cn(
+              'grid h-9 w-9 cursor-pointer place-items-center rounded-full border-2 text-[13px] font-bold text-white shadow-md',
+              'bg-gradient-to-br from-coral to-amber',
+              dark ? 'border-board' : 'border-white',
+            )}
+            aria-label={`${name} — account menu`}
+          >
+            {name.slice(0, 2).toUpperCase()}
+          </button>
+        )}
       </div>
     </nav>
   );

@@ -22,6 +22,7 @@ dependencies = [
     "httpx>=0.27",
     "supabase>=2.10",
     "PyJWT>=2.10",
+    "cryptography>=42",
     "python-multipart>=0.0.20",
     "websockets>=14",
     "structlog>=24.4",

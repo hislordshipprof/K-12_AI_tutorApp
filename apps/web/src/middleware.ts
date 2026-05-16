@@ -14,6 +14,7 @@ const PROTECTED_PREFIXES = [
   '/notes',
   '/history',
   '/classroom',
+  '/redeem-invite',
 ] as const;
 
 function isProtectedPath(pathname: string): boolean {
@@ -24,13 +25,6 @@ function isProtectedPath(pathname: string): boolean {
 
 export async function middleware(request: NextRequest) {
   const { response, user } = await updateSupabaseSession(request);
-
-  // Demo mode short-circuit: keep refreshing the session (so the cookies
-  // stay valid if a user IS signed in) but never gate any route. This is
-  // how marketing demos and Vercel previews stay fully click-throughable.
-  if (process.env.NEXT_PUBLIC_DEMO_MODE === 'true') {
-    return response;
-  }
 
   if (!user && isProtectedPath(request.nextUrl.pathname)) {
     const redirectUrl = request.nextUrl.clone();

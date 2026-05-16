@@ -11,6 +11,7 @@ import {
 import { Toaster } from 'sonner';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { AuthProvider } from '@/components/auth-provider';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 
 const SupabaseContext = createContext<SupabaseClient | null>(null);
@@ -59,8 +60,10 @@ export function Providers({ children }: ProvidersProps) {
   return (
     <SupabaseContext.Provider value={supabase}>
       <QueryClientProvider client={queryClient}>
-        {children}
-        <Toaster position="top-center" richColors closeButton />
+        <AuthProvider>
+          {children}
+          <Toaster position="top-center" richColors closeButton />
+        </AuthProvider>
       </QueryClientProvider>
     </SupabaseContext.Provider>
   );
