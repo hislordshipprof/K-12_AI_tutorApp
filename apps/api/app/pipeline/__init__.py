@@ -26,6 +26,12 @@ from app.pipeline.jobs import (
     StageHandler,
     run_job,
 )
+from app.pipeline.render import (
+    RenderError,
+    RenderResult,
+    render_pdf_pages,
+    render_topic,
+)
 
 __all__ = [
     "STAGE_SEQUENCES",
@@ -41,4 +47,8 @@ __all__ = [
     "find_soffice",
     "ingest_material",
     "validate_upload",
+    "RenderError",
+    "RenderResult",
+    "render_pdf_pages",
+    "render_topic",
 ]

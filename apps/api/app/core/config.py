@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     ingest_rate_per_minute: int = Field(default=10, alias="INGEST_RATE_PER_MINUTE")
     ingest_quota_per_day: int = Field(default=100, alias="INGEST_QUOTA_PER_DAY")
 
+    # ── Slide rendering (teacher-authoring.md §6 "Render", §7) ───────────────
+    # `pymupdf` rasterises a claimed slide/figure page to a PNG that the
+    # classroom shows as a backdrop under Aria's scene annotations. The DPI
+    # sets the raster resolution — 150 DPI renders a US-letter slide to a
+    # ~1275x1650 PNG, sharp enough for a full-screen backdrop without bloating
+    # Storage.
+    render_dpi: int = Field(default=150, alias="RENDER_DPI")
+
     # ── Validators / helpers ────────────────────────────────────────────────
     @field_validator("log_level")
     @classmethod

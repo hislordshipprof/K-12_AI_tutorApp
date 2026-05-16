@@ -40,7 +40,7 @@ work that can proceed alongside Phase 0.
 | 0 — Auth & compliance | 0.1–0.4 | 4/4 — COMPLETE |
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
-| 2 — Authoring pipeline | 2.1–2.7 | 2/7 — 2.1 ingest, 2.2 comprehension+segmentation |
+| 2 — Authoring pipeline | 2.1–2.7 | 3/7 — 2.1 ingest, 2.2 comprehension+segmentation, 2.3 slide rendering |
 | 3 — Admin board | 3.1–3.5 | 0/5 |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
@@ -536,7 +536,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   the doc's "~4" estimate was corrected (see Acceptance criteria) and
   the finer breakdown accepted.
 
-### [ ] 2.3 — Slide rendering (post-confirm, slides-only)
+### [x] 2.3 — Slide rendering (post-confirm, slides-only)
 - **Why:** the classroom displays the teacher's real slides; only
   displayed pages need rasterising.
 - **Build:** `pymupdf` render of claimed `slides`/`figure` pages →
@@ -547,7 +547,25 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   bucket.
 - **Verify:** `pnpm api:test`; confirm a Fluids breakdown, check PNGs.
 - **Depends on:** 2.2.
-- **Status:** not started
+- **Status:** done. New `app/pipeline/render.py` — `render_pdf_pages`
+  (pure core: PDF bytes + 0-based page indices → `{idx: png_bytes}` via
+  `pymupdf`, resolution config-driven) + `render_topic(topic_id)` (DB
+  function: load the topic's `topic_pages`, render each DISTINCT
+  slide/figure page from its material's `normalized_pdf`, upload the PNG
+  to the `lesson-materials` bucket, upsert a `material_pages` row).
+  `render_script.py` verification script. Config knob
+  `render_dpi` (default 150 — a ~1275×1650 PNG, sharp for a §7 backdrop).
+  **Idempotency:** the `material_pages` PK `(material_id, idx)` — pages
+  already in `material_pages` are skipped, and the write is an `upsert`
+  on that PK, so a re-run / two topics sharing a page render it once.
+  **"notes/practice never rendered":** prose pages never get a
+  `topic_pages` row, AND the renderer additionally filters to
+  `role in ('slide','figure')` defensively. `pymupdf` added to
+  `pyproject.toml`. 12 mocked tests in `tests/test_render.py`; `pnpm
+  api:test` → 244 passed, 10 skipped (232 baseline + 12). `import
+  app.main` clean. No migration, no web changes. The §10 confirm-
+  breakdown step that writes `topic_pages` rows is a later task — 2.3
+  only CONSUMES them; the script renders pages from a PDF directly.
 
 ### [ ] 2.4 — Persona builder
 - **Why:** teacher courses are any subject/grade; Aria must not be the
