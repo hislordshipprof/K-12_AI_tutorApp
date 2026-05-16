@@ -7,6 +7,7 @@ import { useState } from 'react';
 
 import { Icon, type IconName } from '@/components/aria/icon';
 import { CreateClassModal } from '@/components/teach/create-class-modal';
+import { CreateCourseModal } from '@/components/teach/create-course-modal';
 import { displayName, useMe } from '@/hooks/use-me';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -49,6 +50,7 @@ export default function TeachHomePage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const [createCourseOpen, setCreateCourseOpen] = useState(false);
 
   const {
     data: classes = [],
@@ -106,6 +108,7 @@ export default function TeachHomePage() {
               </button>
               <button
                 type="button"
+                onClick={() => setCreateCourseOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-indigo px-4 py-2.5 text-sm font-semibold text-white shadow-[0_6px_18px_rgba(91,91,229,0.45)] transition-colors hover:bg-indigo-deep"
               >
                 <Icon name="plus" size={15} /> New course
@@ -170,6 +173,7 @@ export default function TeachHomePage() {
                 : 'Courses you author'
             }
             action="+ New course"
+            onAction={() => setCreateCourseOpen(true)}
           />
           {coursesError ? (
             <LoadError what="courses" />
@@ -187,6 +191,7 @@ export default function TeachHomePage() {
               title="No courses yet"
               body="Create a course, add a unit, and upload your material to get started."
               cta="New course"
+              onCta={() => setCreateCourseOpen(true)}
             />
           )}
         </section>
@@ -199,6 +204,16 @@ export default function TeachHomePage() {
           setCreateOpen(false);
           queryClient.invalidateQueries({ queryKey: ['teacher-classes'] });
           router.push(`/teach/classes/${cls.id}`);
+        }}
+      />
+
+      <CreateCourseModal
+        open={createCourseOpen}
+        onClose={() => setCreateCourseOpen(false)}
+        onCreated={(course) => {
+          setCreateCourseOpen(false);
+          queryClient.invalidateQueries({ queryKey: ['teacher-courses'] });
+          router.push(`/teach/courses/${course.id}`);
         }}
       />
     </div>
@@ -333,7 +348,10 @@ function CourseCard({ course }: { course: TeacherCourse }) {
   const meta = [course.subject, course.grade_band].filter(Boolean).join(' · ');
 
   return (
-    <div className="flex flex-col overflow-hidden rounded-[20px] border border-border bg-white shadow-sm transition-all duration-200 hover:-translate-y-[2px] hover:shadow-md">
+    <Link
+      href={`/teach/courses/${course.id}`}
+      className="flex flex-col overflow-hidden rounded-[20px] border border-border bg-white shadow-sm transition-all duration-200 hover:-translate-y-[2px] hover:shadow-md"
+    >
       <div
         className="relative flex h-[84px] items-end p-4"
         style={{ background: course.color_gradient ?? DEFAULT_COURSE_COLOR }}
@@ -373,7 +391,7 @@ function CourseCard({ course }: { course: TeacherCourse }) {
           )}
         </div>
       </div>
-    </div>
+    </Link>
   );
 }
 

@@ -19,17 +19,22 @@ exists under another teacher).
 
 from __future__ import annotations
 
+import functools
 import secrets
+import string
 from datetime import datetime, timezone
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from anyio import to_thread
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.core.logging import get_logger
+from app.core.rate_limit import RateLimitExceeded, ingest_acquire
 from app.core.security import get_user_role, require_role
 from app.core.supabase import get_supabase
+from app.pipeline.ingest import IngestRejected, ingest_material, validate_upload
 
 router = APIRouter(prefix="/teacher", tags=["teacher"])
 log = get_logger(__name__)
@@ -121,6 +126,128 @@ def _load_owned_class(
     return cls
 
 
+def _load_owned_course(
+    supabase: Any, course_id: str, caller_id: str
+) -> dict[str, Any]:
+    """Load a `courses` row and enforce caller ownership (`§4` RLS).
+
+    The service-role client bypasses RLS, so ownership is checked here: the
+    caller must be the course's `owner_id`, or an `admin`. A missing course
+    OR a course owned by someone else both raise 404 (never 403) so the
+    endpoint does not leak that the course id exists.
+    """
+    try:
+        resp = (
+            supabase.table("courses")
+            .select("id,title,subject,grade_band,teaching_style,owner_id")
+            .eq("id", course_id)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning("course_lookup_failed", error=str(e), course_id=course_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="course lookup failed",
+        ) from e
+
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="course not found"
+        )
+    course = rows[0]
+    if str(course.get("owner_id") or "") != caller_id and (
+        get_user_role(caller_id) != "admin"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="course not found"
+        )
+    return course
+
+
+def _load_owned_unit(
+    supabase: Any, unit_id: str, caller_id: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load a `units` row and the `courses` row that owns it (`§4` RLS).
+
+    A missing unit -> 404. The unit's course is then loaded via
+    `_load_owned_course`, which enforces caller ownership the same way — a
+    unit under a non-owned (or missing) course also 404s. Returns
+    `(unit, course)`.
+    """
+    try:
+        resp = (
+            supabase.table("units")
+            .select("id,course_id,n,name")
+            .eq("id", unit_id)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning("unit_lookup_failed", error=str(e), unit_id=unit_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="unit lookup failed",
+        ) from e
+
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="unit not found"
+        )
+    unit = rows[0]
+    course = _load_owned_course(supabase, str(unit.get("course_id")), caller_id)
+    return unit, course
+
+
+# Slug alphabet for the random suffix — lowercase letters + digits.
+_SLUG_ALPHABET = string.ascii_lowercase + string.digits
+_SLUG_MAX_TRIES = 12
+
+
+def _slugify(title: str) -> str:
+    """Slugify `title`: lowercase, collapse non-alphanumeric runs to one `-`,
+    strip leading/trailing `-`, truncate to 40 chars; empty -> ``"course"``."""
+    out: list[str] = []
+    prev_dash = False
+    for ch in title.lower():
+        if ch.isalnum():
+            out.append(ch)
+            prev_dash = False
+        elif not prev_dash:
+            out.append("-")
+            prev_dash = True
+    slug = "".join(out).strip("-")[:40].strip("-")
+    return slug or "course"
+
+
+def _generate_unique_slug(supabase: Any, title: str) -> str:
+    """Generate a `courses.slug` not already present in the table.
+
+    Slugifies `title` and appends a `-` + 6 random chars. Retries up to
+    ``_SLUG_MAX_TRIES`` times; raises ``HTTPException`` 503 if every
+    candidate collides (vanishingly unlikely).
+    """
+    base = _slugify(title)
+    for _ in range(_SLUG_MAX_TRIES):
+        suffix = "".join(secrets.choice(_SLUG_ALPHABET) for _ in range(6))
+        slug = f"{base}-{suffix}"
+        resp = (
+            supabase.table("courses")
+            .select("id")
+            .eq("slug", slug)
+            .limit(1)
+            .execute()
+        )
+        if not (getattr(resp, "data", None) or []):
+            return slug
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="could not allocate a unique slug",
+    )
+
+
 def _student_email(supabase: Any, student_id: str) -> str | None:
     """Best-effort fetch of a student's email from `auth.users`.
 
@@ -142,6 +269,29 @@ class ClassCreate(BaseModel):
 
     name: str = Field(min_length=1)
     subject: str | None = None
+
+
+class CourseCreate(BaseModel):
+    """Request body for `POST /v1/teacher/courses`."""
+
+    title: str = Field(min_length=1)
+    subject: str | None = None
+    grade_band: str | None = None
+
+
+class CourseUpdate(BaseModel):
+    """Request body for `PATCH /v1/teacher/courses/{course_id}`.
+
+    An empty `teaching_style` is allowed — it clears the course's style.
+    """
+
+    teaching_style: str
+
+
+class UnitCreate(BaseModel):
+    """Request body for `POST /v1/teacher/courses/{course_id}/units`."""
+
+    name: str = Field(min_length=1)
 
 
 def _course_owner_for_job(supabase: Any, job: dict[str, Any]) -> str | None:
@@ -680,3 +830,358 @@ async def remove_class_member(
             detail="member remove failed",
         ) from e
     return None
+
+
+# ─── course / unit authoring (`/teach/courses/[id]`, `teacher-authoring.md`
+# §4/§6/§9) ────────────────────────────────────────────────────────────────
+@router.post("/courses", status_code=status.HTTP_201_CREATED)
+async def create_course(
+    body: CourseCreate,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Create a teacher-authored course owned by the caller (`§9`).
+
+    Teacher/admin-gated. Inserts a `courses` row with `owner_id` set to the
+    caller, `origin='teacher'`, and a freshly-generated UNIQUE `slug`.
+    `teaching_style` is left null — it is set later via PATCH. The response
+    shape mirrors a `GET /v1/teacher/courses` item (with zero counts) so the
+    frontend can reuse it directly.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="course store unavailable",
+        )
+
+    caller_id = str(user.get("sub") or "")
+    try:
+        slug = _generate_unique_slug(supabase, body.title)
+        payload = {
+            "owner_id": caller_id,
+            "origin": "teacher",
+            "slug": slug,
+            "title": body.title,
+            "subject": body.subject,
+            "grade_band": body.grade_band,
+        }
+        resp = supabase.table("courses").insert(payload).execute()
+        rows = getattr(resp, "data", None) or []
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.warning("course_create_failed", error=str(e), teacher=caller_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="course create failed",
+        ) from e
+
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="course create failed",
+        )
+    created = rows[0]
+    return {
+        "id": str(created["id"]),
+        "title": created.get("title"),
+        "subject": created.get("subject"),
+        "grade_band": created.get("grade_band"),
+        "unit_count": 0,
+        "topic_count": 0,
+        "published_count": 0,
+        "draft_count": 0,
+        "icon_emoji": created.get("icon_emoji"),
+        "color_gradient": created.get("color_gradient"),
+    }
+
+
+@router.get("/courses/{course_id}")
+async def get_course_detail(
+    course_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Return a course's units with per-unit material counts (`§9`).
+
+    Teacher/admin-gated; ownership is enforced explicitly (the service role
+    bypasses RLS) — a missing OR non-owned course -> 404. Units are ordered
+    by `n`; `material_count` is the `lesson_materials` rows under each unit.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="course not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    course = _load_owned_course(supabase, str(course_id), caller_id)
+
+    try:
+        u_resp = (
+            supabase.table("units")
+            .select("id,n,name")
+            .eq("course_id", str(course_id))
+            .order("n")
+            .execute()
+        )
+        units = getattr(u_resp, "data", None) or []
+
+        material_count: dict[str, int] = {}
+        if units:
+            unit_ids = [str(u["id"]) for u in units]
+            m_resp = (
+                supabase.table("lesson_materials")
+                .select("id,unit_id")
+                .in_("unit_id", unit_ids)
+                .execute()
+            )
+            for m in getattr(m_resp, "data", None) or []:
+                uid = str(m.get("unit_id"))
+                material_count[uid] = material_count.get(uid, 0) + 1
+    except Exception as e:  # noqa: BLE001
+        log.warning("course_detail_failed", error=str(e), course_id=str(course_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="course detail lookup failed",
+        ) from e
+
+    return {
+        "id": str(course["id"]),
+        "title": course.get("title"),
+        "subject": course.get("subject"),
+        "grade_band": course.get("grade_band"),
+        "teaching_style": course.get("teaching_style"),
+        "units": [
+            {
+                "id": str(u["id"]),
+                "n": u.get("n"),
+                "name": u.get("name"),
+                "material_count": material_count.get(str(u["id"]), 0),
+            }
+            for u in units
+        ],
+    }
+
+
+@router.patch("/courses/{course_id}")
+async def update_course(
+    course_id: UUID,
+    body: CourseUpdate,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Set a course's `teaching_style` (`§9`).
+
+    Teacher/admin-gated; the course must be owned by the caller (or caller
+    is admin) else 404. An empty `teaching_style` clears the style.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="course not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_course(supabase, str(course_id), caller_id)
+
+    try:
+        (
+            supabase.table("courses")
+            .update({"teaching_style": body.teaching_style})
+            .eq("id", str(course_id))
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("course_update_failed", error=str(e), course_id=str(course_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="course update failed",
+        ) from e
+
+    return {"id": str(course_id), "teaching_style": body.teaching_style}
+
+
+@router.post("/courses/{course_id}/units", status_code=status.HTTP_201_CREATED)
+async def create_unit(
+    course_id: UUID,
+    body: UnitCreate,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Create a unit under a course (`§9`).
+
+    Teacher/admin-gated; the course must be owned by the caller (or caller
+    is admin) else 404. The new unit's `n` is one past the highest existing
+    `n` in the course (the §4 `UNIQUE(course_id, n)` ordering).
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="course not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_course(supabase, str(course_id), caller_id)
+
+    try:
+        u_resp = (
+            supabase.table("units")
+            .select("n")
+            .eq("course_id", str(course_id))
+            .execute()
+        )
+        existing = getattr(u_resp, "data", None) or []
+        next_n = max((u.get("n") or 0 for u in existing), default=0) + 1
+        resp = (
+            supabase.table("units")
+            .insert(
+                {
+                    "course_id": str(course_id),
+                    "n": next_n,
+                    "name": body.name,
+                }
+            )
+            .execute()
+        )
+        rows = getattr(resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning("unit_create_failed", error=str(e), course_id=str(course_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="unit create failed",
+        ) from e
+
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="unit create failed",
+        )
+    created = rows[0]
+    return {
+        "id": str(created["id"]),
+        "n": created.get("n"),
+        "name": created.get("name"),
+        "material_count": 0,
+    }
+
+
+@router.get("/units/{unit_id}")
+async def get_unit_detail(
+    unit_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Return a unit's lesson materials (`§6`/`§9`).
+
+    Teacher/admin-gated; the unit's course must be owned by the caller (or
+    caller is admin) else 404. Materials are ordered by `uploaded_at`;
+    `status` is the row's `conversion_status`.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="unit not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    unit, course = _load_owned_unit(supabase, str(unit_id), caller_id)
+
+    try:
+        m_resp = (
+            supabase.table("lesson_materials")
+            .select("id,filename,kind,conversion_status")
+            .eq("unit_id", str(unit_id))
+            .order("uploaded_at")
+            .execute()
+        )
+        materials = getattr(m_resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning("unit_detail_failed", error=str(e), unit_id=str(unit_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="unit detail lookup failed",
+        ) from e
+
+    return {
+        "id": str(unit["id"]),
+        "name": unit.get("name"),
+        "course_id": str(course["id"]),
+        "course_title": course.get("title"),
+        "materials": [
+            {
+                "id": str(m["id"]),
+                "filename": m.get("filename"),
+                "kind": m.get("kind"),
+                "status": m.get("conversion_status"),
+            }
+            for m in materials
+        ],
+    }
+
+
+@router.post("/units/{unit_id}/materials")
+async def upload_materials(
+    unit_id: UUID,
+    files: Annotated[list[UploadFile], File(...)],
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> list[dict[str, Any]]:
+    """Upload one or more lesson materials to a unit (`§6` Ingest).
+
+    Teacher/admin-gated; the unit's course must be owned by the caller (or
+    caller is admin) else 404. Every file is pre-validated with
+    `validate_upload` BEFORE any ingest runs, so a bad file in the batch
+    does not leave the batch half-ingested. Each accepted file is
+    rate-limited (`ingest_acquire` -> 429 on overflow) then ingested via
+    `ingest_material` (a blocking sync call, run off the event loop).
+    `kind` is left null — later segmentation proposes it (`§4`).
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="unit not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_unit(supabase, str(unit_id), caller_id)
+
+    # Read + pre-validate every file BEFORE ingesting any of them.
+    pending: list[tuple[str, bytes, str | None]] = []
+    for f in files:
+        data = await f.read()
+        filename = f.filename or ""
+        try:
+            validate_upload(filename, data, f.content_type)
+        except IngestRejected as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{filename}: {exc}",
+            ) from exc
+        pending.append((filename, data, f.content_type))
+
+    results: list[dict[str, Any]] = []
+    for filename, data, claimed_mime in pending:
+        try:
+            await ingest_acquire(caller_id)
+        except RateLimitExceeded as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=str(exc),
+            ) from exc
+        result = await to_thread.run_sync(
+            functools.partial(
+                ingest_material,
+                unit_id=str(unit_id),
+                teacher_id=caller_id,
+                filename=filename,
+                data=data,
+                claimed_mime=claimed_mime,
+                kind=None,
+            )
+        )
+        results.append(
+            {
+                "id": result.material_id,
+                "filename": filename,
+                "kind": None,
+                "status": result.conversion_status,
+            }
+        )
+
+    return results

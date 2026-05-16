@@ -41,7 +41,7 @@ work that can proceed alongside Phase 0.
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
-| 3 — Admin board | 3.1–3.5 | 2/5 — 3.1 (/teach scaffold + role gate), 3.2 (class management + join approvals) done |
+| 3 — Admin board | 3.1–3.5 | 3/5 — 3.1 (/teach scaffold + role gate), 3.2 (class management + join approvals), 3.3 (course/unit management + material upload) done |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
 
@@ -871,7 +871,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   > `approved_at`), **declined** the other, and **removed** the approved
   > student from the roster. No migration.
 
-### [ ] 3.3 — Course/unit management + material upload
+### [x] 3.3 — Course/unit management + material upload
 - **Why:** teachers need to create a course (subject, grade band,
   teaching style) and a unit, and upload material into it.
 - **Build:** course/unit CRUD UI; the unit material upload UI calling
@@ -881,7 +881,53 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   `lesson_materials` row.
 - **Verify:** `pnpm verify`; upload the real deck through the UI.
 - **Depends on:** 3.1, 2.1.
-- **Status:** not started
+- **Status:** done (2026-05-16).
+  Web: `components/teach/create-course-modal.tsx` (the New-course dialog
+  — title/subject/grade band — popped from `/teach`),
+  `app/teach/courses/[id]/page.tsx` (course detail — an editable
+  teaching-style card + the units list + an inline add-unit form), and
+  `app/teach/courses/[id]/units/[unitId]/page.tsx` (unit detail — a
+  stage-then-upload material drop zone + the materials list with a
+  conversion-status badge). All three are wired to the real endpoints
+  via `lib/api.ts` + React Query (loading / not-found / error states).
+  API: `app/api/v1/teacher.py` gained six endpoints, each
+  `require_role('teacher','admin')` and ownership-gated explicitly (the
+  service role bypasses RLS — a non-owned resource 404s, not 403s) —
+  `POST /v1/teacher/courses` (creates an `origin='teacher'` course with
+  a generated UNIQUE slug), `GET /v1/teacher/courses/{id}` (units +
+  per-unit material counts + teaching style), `PATCH .../courses/{id}`
+  (teaching style), `POST .../courses/{id}/units` (a unit at the next
+  `n`), `GET /v1/teacher/units/{id}` (materials), and
+  `POST /v1/teacher/units/{id}/materials` (multipart — pre-validates
+  every file, then runs the task-2.1 `ingest_material` pipeline off the
+  event loop via `to_thread`, rate-limited per teacher).
+  >
+  > DECISION: `POST .../materials` runs the §6 ingest (validate →
+  > Storage → LibreOffice convert-to-PDF) SYNCHRONOUSLY. §6 principle 4's
+  > async-`pipeline_jobs` rule targets the minutes-long *comprehension*
+  > and *generation* stages (tasks 3.4 / 3.5); a single office-file
+  > conversion is seconds, and §13 ("`segment` is rejected while
+  > conversions are pending") confirms conversion completes before the
+  > segment job runs. The 2.1 `ingest_material` building block is used
+  > as built. `lesson_materials.kind` is left null at upload — §4 has it
+  > model-proposed by later segmentation.
+  >
+  > **Verified.** `pnpm verify` → phase-1 17/17, phase-2 9/9, ALL CHECKS
+  > PASS. `pnpm api:test` → 362 passed, 10 skipped (345 baseline + 17 new
+  > tests in `test_course_management.py`). `tsc` clean; `next build` ok.
+  > **Live end-to-end on the real cloud DB** (as a `teacher`-role
+  > account): created a course (subject Physics, grade band 9-12) → a
+  > unit → uploaded the real `Unit 8 - Fluids - AP Physics 1.pptx`
+  > (4.9 MB) via `POST .../materials`; the ingest pipeline converted it
+  > and wrote a `lesson_materials` row — `conversion_status='converted'`,
+  > teacher-prefixed `storage_path`, `normalized_pdf` set (DB-confirmed).
+  > **Live in the browser** (signed in as the teacher): the course page
+  > rendered the real course (subject/grade, units list); the
+  > teaching-style `PATCH` saved and re-displayed; the unit page showed
+  > the uploaded deck with a "Ready" badge. Every acceptance criterion
+  > met. A labeled `[3.3 verify]` course remains in the cloud DB as the
+  > verification artifact (alongside the existing `e2e-fluids-demo`).
+  > No migration, no web/API schema change. Next: 3.4.
 
 ### [ ] 3.4 — Segmentation job UI + confirm-breakdown screen
 - **Why:** the teacher must watch the segment job and confirm/edit the
