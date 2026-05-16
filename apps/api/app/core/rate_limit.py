@@ -21,11 +21,14 @@ a Redis SETNX or a per-instance hard cap behind a load balancer.
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
+import time
+from collections import defaultdict, deque
 
 from fastapi import Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+
+from app.core.config import settings
 
 
 def _user_key(request: Request) -> str:
@@ -71,4 +74,55 @@ async def voice_release(user_id: str) -> None:
             _voice_active.pop(user_id, None)
 
 
-__all__ = ["limiter", "voice_acquire", "voice_release", "MAX_VOICE_PER_USER"]
+# ── Teacher ingest rate-limit + daily quota (teacher-authoring.md §6) ────────
+# Uploads (and segment/generate calls) trigger expensive multimodal/Pro work.
+# `ingest_acquire` is an asyncio-safe sliding-window gate per teacher: a
+# short-window rate limit AND a rolling 24h quota. Same in-process caveat as
+# the voice counter above — swap to Redis when the API scales out.
+_ingest_events: dict[str, deque[float]] = defaultdict(deque)
+_ingest_lock = asyncio.Lock()
+
+_WINDOW_S = 60.0
+_DAY_S = 86_400.0
+
+
+class RateLimitExceeded(RuntimeError):
+    """Raised when a teacher exceeds the ingest rate limit or daily quota."""
+
+
+async def ingest_acquire(teacher_id: str) -> None:
+    """Record one ingest call for `teacher_id`, or raise `RateLimitExceeded`.
+
+    Enforces two limits from a single per-teacher timestamp log:
+      * no more than `ingest_rate_per_minute` calls in any 60s window;
+      * no more than `ingest_quota_per_day` calls in any rolling 24h window.
+
+    A rejected call is NOT recorded, so a teacher who hits the limit and
+    backs off recovers cleanly once the window slides.
+    """
+    now = time.monotonic()
+    async with _ingest_lock:
+        events = _ingest_events[teacher_id]
+        # Drop anything older than the longest window we care about.
+        while events and now - events[0] > _DAY_S:
+            events.popleft()
+        in_minute = sum(1 for t in events if now - t <= _WINDOW_S)
+        if in_minute >= settings.ingest_rate_per_minute:
+            raise RateLimitExceeded(
+                f"ingest rate limit: {settings.ingest_rate_per_minute}/min exceeded"
+            )
+        if len(events) >= settings.ingest_quota_per_day:
+            raise RateLimitExceeded(
+                f"ingest daily quota: {settings.ingest_quota_per_day}/day exceeded"
+            )
+        events.append(now)
+
+
+__all__ = [
+    "limiter",
+    "voice_acquire",
+    "voice_release",
+    "MAX_VOICE_PER_USER",
+    "ingest_acquire",
+    "RateLimitExceeded",
+]

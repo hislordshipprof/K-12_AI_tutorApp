@@ -9,6 +9,17 @@ Phase 2.
 
 from __future__ import annotations
 
+from app.pipeline.ingest import (
+    ConversionFailed,
+    IngestRejected,
+    IngestResult,
+    SofficeUnavailable,
+    ValidatedUpload,
+    convert_to_pdf,
+    find_soffice,
+    ingest_material,
+    validate_upload,
+)
 from app.pipeline.jobs import (
     STAGE_SEQUENCES,
     PipelineError,
@@ -16,4 +27,18 @@ from app.pipeline.jobs import (
     run_job,
 )
 
-__all__ = ["STAGE_SEQUENCES", "PipelineError", "StageHandler", "run_job"]
+__all__ = [
+    "STAGE_SEQUENCES",
+    "PipelineError",
+    "StageHandler",
+    "run_job",
+    "ConversionFailed",
+    "IngestRejected",
+    "IngestResult",
+    "SofficeUnavailable",
+    "ValidatedUpload",
+    "convert_to_pdf",
+    "find_soffice",
+    "ingest_material",
+    "validate_upload",
+]

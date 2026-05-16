@@ -40,7 +40,7 @@ work that can proceed alongside Phase 0.
 | 0 — Auth & compliance | 0.1–0.4 | 4/4 — COMPLETE |
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
-| 2 — Authoring pipeline | 2.1–2.7 | 0/7 |
+| 2 — Authoring pipeline | 2.1–2.7 | 1/7 — 2.1 done (ingest + normalize-to-PDF) |
 | 3 — Admin board | 3.1–3.5 | 0/5 |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
@@ -468,7 +468,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
 > 2.1–2.3 are the ingest+understand+render section; 2.4–2.7 the
 > generate+quiz+validate section. (`teacher-authoring.md` §6.)
 
-### [ ] 2.1 — Ingest validation + normalize-to-PDF
+### [x] 2.1 — Ingest validation + normalize-to-PDF
 - **Why:** uploads are untrusted; everything downstream needs one PDF
   form.
 - **Build:** size cap + MIME allow-list + spoofed-type rejection; the
@@ -479,7 +479,24 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   `.pptx` produces a PDF.
 - **Verify:** `pnpm api:test`; run on `Unit 8 - Fluids - AP Physics 1.pptx`.
 - **Depends on:** 1.4.
-- **Status:** not started
+- **Status:** done. New `app/pipeline/ingest.py` — `validate_upload`
+  (size cap, MIME allow-list, **spoof rejection** by magic-byte sniffing:
+  `%PDF`; OOXML = ZIP peeked for `ppt/`/`word/`; text = decodes clean,
+  no NUL — the claimed extension is never trusted), `convert_to_pdf`
+  (PDF passthrough; `.docx`/`.pptx`/`.txt` via LibreOffice headless,
+  **sandboxed**: hard timeout, isolated per-call `-env:UserInstallation`
+  profile, scrubbed env, fixed argv `shell=False`), `ingest_material`
+  (drives `conversion_status` pending→converting→converted/failed).
+  `apps/api/Dockerfile` gains a `libreoffice-writer`/`-impress` + fonts
+  layer; per-teacher upload rate-limit + daily quota in `rate_limit.py`
+  (`ingest_acquire`); config defaults — 50 MB cap, 120 s timeout,
+  10/min, 100/day. Verification script `app/pipeline/ingest_script.py`.
+  **Verified** with LibreOffice 26.2.3 installed: `pnpm api:test` →
+  218 passed, 10 skipped (the 3 LibreOffice conversion tests now RUN —
+  `.docx`/`.pptx`/`.txt`→PDF; only the 10 DB-RLS tests skip). The real
+  **`Unit 8 - Fluids - AP Physics 1.pptx`** (4.9 MB) ran through
+  `ingest_script` → validated as pptx → produced a **3.4 MB valid PDF**
+  (`%PDF-`). 25 ingest tests pass; `import app.main` clean.
 
 ### [ ] 2.2 — Comprehension + topic segmentation
 - **Why:** turns an unstructured upload into a proposed topic breakdown

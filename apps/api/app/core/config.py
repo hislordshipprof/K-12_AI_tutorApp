@@ -56,6 +56,17 @@ class Settings(BaseSettings):
     dev_mode: bool = Field(default=False, alias="DEV_MODE")
     environment: str = Field(default="development", alias="ENVIRONMENT")
 
+    # ── Teacher ingest pipeline (teacher-authoring.md §6 "Ingest") ───────────
+    # Uploads are untrusted: a per-file size cap, the LibreOffice conversion
+    # timeout, and a per-teacher rate-limit + daily quota bound the expensive
+    # multimodal/Pro calls a runaway upload loop would otherwise trigger.
+    ingest_max_file_mb: int = Field(default=50, alias="INGEST_MAX_FILE_MB")
+    ingest_convert_timeout_s: int = Field(
+        default=120, alias="INGEST_CONVERT_TIMEOUT_S"
+    )
+    ingest_rate_per_minute: int = Field(default=10, alias="INGEST_RATE_PER_MINUTE")
+    ingest_quota_per_day: int = Field(default=100, alias="INGEST_QUOTA_PER_DAY")
+
     # ── Validators / helpers ────────────────────────────────────────────────
     @field_validator("log_level")
     @classmethod

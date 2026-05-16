@@ -34,8 +34,26 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=8000
 
 # Minimal runtime deps + a non-root user.
+#
+# LibreOffice headless is the teacher-pipeline ingest layer
+# (`teacher-authoring.md` §6 "Normalize -> PDF", task 2.1): it converts
+# uploaded `.docx`/`.pptx`/`.txt` files to PDF via `soffice --headless`.
+# We install only the Writer + Impress components (Word + PowerPoint) plus
+# common fonts — not the full LibreOffice suite — to keep the image lean.
+#
+# Sandboxing note: `app.pipeline.ingest.convert_to_pdf` already runs
+# `soffice` with a hard timeout, an isolated per-call profile dir, and a
+# scrubbed environment. The remaining sandbox guarantees come from THIS
+# container — the conversion subprocess inherits the container's network
+# and resource limits. For a hardened deploy run the API container with
+# `--network=none`-equivalent egress restrictions and CPU/memory caps
+# (Fly.io machine limits / a restricted Docker network) so a crafted
+# upload cannot reach the network or exhaust the host.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl \
+      libreoffice-writer libreoffice-impress \
+      fonts-liberation fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --shell /bin/bash app
 
