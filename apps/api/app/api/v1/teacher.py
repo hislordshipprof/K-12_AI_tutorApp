@@ -133,3 +133,176 @@ async def get_pipeline_job(
         "stage": job.get("stage"),
         "error": job.get("error"),
     }
+
+
+@router.get("/classes")
+async def list_teacher_classes(
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> list[dict[str, Any]]:
+    """List the caller's non-archived classes with student counts.
+
+    Powers the teacher home page (`/teach`) class list
+    (`teacher-authoring.md` §9). Teacher/admin-gated. The service-role
+    client bypasses RLS, so every query is scoped to the caller
+    explicitly: an admin still only sees their OWN classes here.
+
+    Each item:
+        {"id", "name", "join_code", "subject", "student_count",
+         "pending_count"}
+
+    `student_count` / `pending_count` are `class_members` rows for the
+    class with `status` 'active' / 'pending' respectively. A teacher with
+    no classes gets `[]` (HTTP 200).
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        return []
+
+    caller_id = str(user.get("sub") or "")
+    try:
+        c_resp = (
+            supabase.table("classes")
+            .select("id,name,join_code,subject,archived")
+            .eq("teacher_id", caller_id)
+            .execute()
+        )
+        rows = getattr(c_resp, "data", None) or []
+        classes = [c for c in rows if not c.get("archived")]
+        if not classes:
+            return []
+
+        class_ids = [str(c["id"]) for c in classes]
+        m_resp = (
+            supabase.table("class_members")
+            .select("class_id,status")
+            .in_("class_id", class_ids)
+            .execute()
+        )
+        members = getattr(m_resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning("teacher_classes_lookup_failed", error=str(e), teacher=caller_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="classes lookup failed",
+        ) from e
+
+    active: dict[str, int] = {}
+    pending: dict[str, int] = {}
+    for m in members:
+        cid = str(m.get("class_id"))
+        if m.get("status") == "active":
+            active[cid] = active.get(cid, 0) + 1
+        elif m.get("status") == "pending":
+            pending[cid] = pending.get(cid, 0) + 1
+
+    return [
+        {
+            "id": str(c["id"]),
+            "name": c.get("name"),
+            "join_code": c.get("join_code"),
+            "subject": c.get("subject"),
+            "student_count": active.get(str(c["id"]), 0),
+            "pending_count": pending.get(str(c["id"]), 0),
+        }
+        for c in classes
+    ]
+
+
+@router.get("/courses")
+async def list_teacher_courses(
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> list[dict[str, Any]]:
+    """List the caller's courses with unit/topic aggregate counts.
+
+    Powers the teacher home page (`/teach`) course list
+    (`teacher-authoring.md` §9). Teacher/admin-gated. The service-role
+    client bypasses RLS, so the query is scoped to the caller explicitly
+    via `courses.owner_id`: an admin still only sees their OWN courses.
+
+    Each item:
+        {"id", "title", "subject", "grade_band", "unit_count",
+         "topic_count", "published_count", "draft_count", "icon_emoji",
+         "color_gradient"}
+
+    `unit_count` is `units` for the course; `topic_count` is `topics`
+    under those units; `published_count` / `draft_count` split topics by
+    `status`. A teacher with no courses gets `[]` (HTTP 200).
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        return []
+
+    caller_id = str(user.get("sub") or "")
+    try:
+        c_resp = (
+            supabase.table("courses")
+            .select("id,title,subject,grade_band,icon_emoji,color_gradient")
+            .eq("owner_id", caller_id)
+            .execute()
+        )
+        courses = getattr(c_resp, "data", None) or []
+        if not courses:
+            return []
+
+        course_ids = [str(c["id"]) for c in courses]
+        u_resp = (
+            supabase.table("units")
+            .select("id,course_id")
+            .in_("course_id", course_ids)
+            .execute()
+        )
+        units = getattr(u_resp, "data", None) or []
+
+        topics: list[dict[str, Any]] = []
+        if units:
+            unit_ids = [str(u["id"]) for u in units]
+            t_resp = (
+                supabase.table("topics")
+                .select("id,unit_id,status")
+                .in_("unit_id", unit_ids)
+                .execute()
+            )
+            topics = getattr(t_resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning("teacher_courses_lookup_failed", error=str(e), teacher=caller_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="courses lookup failed",
+        ) from e
+
+    # unit_id -> course_id, so topic counts can be rolled up to the course.
+    course_of_unit = {str(u["id"]): str(u["course_id"]) for u in units}
+
+    unit_count: dict[str, int] = {}
+    for u in units:
+        cid = str(u["course_id"])
+        unit_count[cid] = unit_count.get(cid, 0) + 1
+
+    topic_count: dict[str, int] = {}
+    published_count: dict[str, int] = {}
+    draft_count: dict[str, int] = {}
+    for t in topics:
+        cid = course_of_unit.get(str(t.get("unit_id")))
+        if cid is None:
+            continue
+        topic_count[cid] = topic_count.get(cid, 0) + 1
+        if t.get("status") == "published":
+            published_count[cid] = published_count.get(cid, 0) + 1
+        elif t.get("status") == "draft":
+            draft_count[cid] = draft_count.get(cid, 0) + 1
+
+    return [
+        {
+            "id": str(c["id"]),
+            "title": c.get("title"),
+            "subject": c.get("subject"),
+            "grade_band": c.get("grade_band"),
+            "unit_count": unit_count.get(str(c["id"]), 0),
+            "topic_count": topic_count.get(str(c["id"]), 0),
+            "published_count": published_count.get(str(c["id"]), 0),
+            "draft_count": draft_count.get(str(c["id"]), 0),
+            "icon_emoji": c.get("icon_emoji"),
+            "color_gradient": c.get("color_gradient"),
+        }
+        for c in courses
+    ]

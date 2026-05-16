@@ -37,6 +37,8 @@ export const ICON_PATHS = {
   plus: 'M12 5 V19 M5 12 H19',
   download: 'M12 4 V16 M7 11 L12 16 L17 11 M4 20 H20',
   fire: 'M12 22 C7 22 4 18 4 14 C4 11 6 9 8 7 C9 9 11 10 11 8 C11 5 13 4 12 2 C16 4 20 8 20 14 C20 18 17 22 12 22 Z',
+  users:
+    'M16 21 V19 A4 4 0 0 0 12 15 H6 A4 4 0 0 0 2 19 V21 M13 7 A4 4 0 0 1 5 7 A4 4 0 0 1 13 7 M22 21 V19 A4 4 0 0 0 19 15.13 M16 3.13 A4 4 0 0 1 16 10.87',
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;

@@ -41,7 +41,7 @@ work that can proceed alongside Phase 0.
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
-| 3 — Admin board | 3.1–3.5 | 0/5 |
+| 3 — Admin board | 3.1–3.5 | 1/5 — 3.1 done (/teach scaffold + role gate + teacher home) |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
 
@@ -797,7 +797,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
 > Section 3 gives teachers the UI over the Phase 2 pipeline. 3.1 first
 > (scaffold), then 3.2–3.5. (`teacher-authoring.md` §9.)
 
-### [ ] 3.1 — `/teach` scaffold + role gate
+### [x] 3.1 — `/teach` scaffold + role gate
 - **Why:** every teacher screen needs a role-gated shell + nav.
 - **Build:** the `/teach` route group, role-gated (non-teacher → 403/
   redirect); teacher home listing classes + courses.
@@ -805,7 +805,34 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   home lists the teacher's classes and courses.
 - **Verify:** `pnpm verify`; visit as each role.
 - **Depends on:** 1.2, 0.3.
-- **Status:** not started
+- **Status:** done (2026-05-16).
+  Web: `app/teach/layout.tsx` is the role gate — a server component that
+  reads the signed-in user's `profiles.role` and `redirect()`s a
+  non-teacher to `/dashboard`; `/teach` was also added to the middleware
+  `PROTECTED_PREFIXES` so an unauthenticated visitor is sent to `/login`
+  (defence in depth). `components/teach/teach-chrome.tsx` +
+  `teach-rail.tsx` are the teacher chrome (top nav + a dedicated 72px
+  rail — Home / Classes / Courses). `app/teach/page.tsx` is the teacher
+  home: a compact dark command bar (greeting + Classes/Courses/Students/
+  pending stat chips + New-class/New-course actions) over `Your classes`
+  and `Your courses` sections — class cards (join-code pill, student
+  count, coral "awaiting approval" strip) and course cards (status pill,
+  unit/topic counts, published/draft split), each with a loading skeleton
+  and an empty state. A `users` icon was added to the shared icon set.
+  API: `GET /v1/teacher/classes` + `GET /v1/teacher/courses` added to
+  `app/api/v1/teacher.py`, both `require_role('teacher','admin')` and
+  scoped to the caller (`teacher_id` / `owner_id`); they return the
+  teacher's classes (with active/pending student counts) and courses
+  (with unit/topic/published/draft counts).
+  >
+  > **Verified.** `pnpm verify` → phase-1 17/17, phase-2 9/9, ALL CHECKS
+  > PASS. `pnpm api:test` → 331 passed, 10 skipped (325 baseline + 6 new
+  > teacher-list endpoint tests). Live, both roles: signed in as a
+  > `student` (`/teach` → redirected to `/dashboard`); signed in as a
+  > `teacher` (`/teach` renders — command bar + classes/courses sections
+  > from the real endpoints, empty states for a teacher who owns none).
+  > No migration. The `New class` / `New course` actions are visual only
+  > — the create flows are tasks 3.2 / 3.3.
 
 ### [ ] 3.2 — Class management + join approvals
 - **Why:** teachers create classes, share codes, and approve students

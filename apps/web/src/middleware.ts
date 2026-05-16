@@ -15,6 +15,7 @@ const PROTECTED_PREFIXES = [
   '/history',
   '/classroom',
   '/redeem-invite',
+  '/teach',
 ] as const;
 
 function isProtectedPath(pathname: string): boolean {
