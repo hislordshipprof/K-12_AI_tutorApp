@@ -39,7 +39,7 @@ work that can proceed alongside Phase 0.
 | M — Model strategy | M.1–M.3 | 2/3 — M.3 done; M.1 — Live model connects (verified via 0.5); only the user's barge-in check remains |
 | 0 — Auth & compliance | 0.1–0.4 | 4/4 — COMPLETE |
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
-| 1 — Schema foundations | 1.1–1.4 | 2/4 — 1.1 + 1.2 done (§4 schema + RLS) |
+| 1 — Schema foundations | 1.1–1.4 | 3/4 — 1.1 + 1.2 + 1.3 done (schema + RLS + Storage) |
 | 2 — Authoring pipeline | 2.1–2.7 | 0/7 |
 | 3 — Admin board | 3.1–3.5 | 0/5 |
 | 4 — Student side | 4.1–4.3 | 0/3 |
@@ -400,7 +400,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   > quizzes exist), but once teacher courses generate version-scoped
   > quizzes it must be tightened to the topic-visibility rule.
 
-### [ ] 1.3 — `lesson-materials` Storage bucket
+### [x] 1.3 — `lesson-materials` Storage bucket
 - **Why:** uploads and rendered slide PNGs need storage with correct
   access (teachers write own prefix; students never direct-read).
 - **Build:** create the bucket; access rules so teachers write their
@@ -409,7 +409,21 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   student cannot list/read the bucket directly.
 - **Verify:** `pnpm api:test`; manual access check.
 - **Depends on:** 1.1.
-- **Status:** not started
+- **Status:** done. Migration
+  `supabase/migrations/20260515060000_lesson_materials_storage.sql`
+  applied to cloud — private bucket `lesson-materials` (`public=false`)
+  + 4 own-prefix RLS policies on `storage.objects` (select/insert/
+  update/delete), each scoped `bucket_id='lesson-materials' AND
+  (storage.foldername(name))[1] = auth.uid()::text`. Path convention:
+  first segment of every key is the uploading teacher's uid
+  (`<teacher-uuid>/<unit>/<material>/<file>`). Students get no Storage
+  policy — RLS denies them; the service role bypasses RLS for the
+  pipeline. **Verified** against the live DB (role-switched harness,
+  rolled back): bucket private ✓, 4 policies present ✓, teacher reads
+  own object ✓, student denied teacher's object ✓, teacher insert own
+  prefix ✓, teacher insert another's prefix denied ✓. Idempotent
+  (`on conflict do nothing` + `drop policy if exists`) — re-applied
+  cleanly. No API/web code touched; 184 API tests unaffected.
 
 ### [ ] 1.4 — `pipeline_jobs` worker harness + role helper
 - **Why:** §6 stages run minutes-long; they need an async runner and a
