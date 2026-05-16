@@ -19,10 +19,13 @@ exists under another teacher).
 
 from __future__ import annotations
 
+import secrets
+from datetime import datetime, timezone
 from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 
 from app.core.logging import get_logger
 from app.core.security import get_user_role, require_role
@@ -30,6 +33,115 @@ from app.core.supabase import get_supabase
 
 router = APIRouter(prefix="/teacher", tags=["teacher"])
 log = get_logger(__name__)
+
+# Unambiguous join-code alphabet — no O/0/I/1 so a code is easy to read
+# aloud and type (`teacher-authoring.md` §9).
+_JOIN_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+_JOIN_CODE_MAX_TRIES = 12
+
+
+def _join_code_prefix(subject: str | None) -> str:
+    """Derive the 4-char alpha prefix of a join code from `subject`.
+
+    The first 4 alphabetic characters of `subject`, upper-cased; falls back
+    to ``"CLAS"`` when `subject` is empty or has fewer than 4 letters.
+    """
+    letters = "".join(ch for ch in (subject or "") if ch.isalpha())
+    if len(letters) < 4:
+        return "CLAS"
+    return letters[:4].upper()
+
+
+def _make_join_code(subject: str | None) -> str:
+    """Build a candidate join code: ``PREFIX-XXXX`` (e.g. ``PHYS-7K2M``)."""
+    suffix = "".join(secrets.choice(_JOIN_CODE_ALPHABET) for _ in range(4))
+    return f"{_join_code_prefix(subject)}-{suffix}"
+
+
+def _generate_unique_join_code(supabase: Any, subject: str | None) -> str:
+    """Generate a join code not already present in `classes`.
+
+    Retries up to ``_JOIN_CODE_MAX_TRIES`` times; raises ``HTTPException``
+    503 if every candidate collides (vanishingly unlikely).
+    """
+    for _ in range(_JOIN_CODE_MAX_TRIES):
+        code = _make_join_code(subject)
+        resp = (
+            supabase.table("classes")
+            .select("id")
+            .eq("join_code", code)
+            .limit(1)
+            .execute()
+        )
+        if not (getattr(resp, "data", None) or []):
+            return code
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="could not allocate a unique join code",
+    )
+
+
+def _load_owned_class(
+    supabase: Any, class_id: str, caller_id: str
+) -> dict[str, Any]:
+    """Load a `classes` row and enforce caller ownership (`§4` RLS).
+
+    The service-role client bypassed RLS, so ownership is checked here: the
+    caller must be the class's `teacher_id`, or an `admin`. A missing class
+    OR a class owned by someone else both raise 404 (never 403) so the
+    endpoint does not leak that the class id exists.
+    """
+    try:
+        resp = (
+            supabase.table("classes")
+            .select("id,name,subject,join_code,teacher_id,archived")
+            .eq("id", class_id)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning("class_lookup_failed", error=str(e), class_id=class_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="class lookup failed",
+        ) from e
+
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="class not found"
+        )
+    cls = rows[0]
+    if str(cls.get("teacher_id") or "") != caller_id and (
+        get_user_role(caller_id) != "admin"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="class not found"
+        )
+    return cls
+
+
+def _student_email(supabase: Any, student_id: str) -> str | None:
+    """Best-effort fetch of a student's email from `auth.users`.
+
+    `profiles` has no email column (`teacher-authoring.md` §4); the address
+    lives in `auth.users`. Any failure (admin API missing, network) yields
+    None — a roster row without an email is fine, a crash is not.
+    """
+    try:
+        result = supabase.auth.admin.get_user_by_id(student_id)
+        user = getattr(result, "user", None) or result
+        return getattr(user, "email", None)
+    except Exception as e:  # noqa: BLE001
+        log.warning("student_email_lookup_failed", error=str(e), student=student_id)
+        return None
+
+
+class ClassCreate(BaseModel):
+    """Request body for `POST /v1/teacher/classes`."""
+
+    name: str = Field(min_length=1)
+    subject: str | None = None
 
 
 def _course_owner_for_job(supabase: Any, job: dict[str, Any]) -> str | None:
@@ -306,3 +418,265 @@ async def list_teacher_courses(
         }
         for c in courses
     ]
+
+
+# ─── class management (`/teach/classes/[id]`, `teacher-authoring.md` §9) ───
+@router.post("/classes", status_code=status.HTTP_201_CREATED)
+async def create_class(
+    body: ClassCreate,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Create a class owned by the caller (`teacher-authoring.md` §9).
+
+    Teacher/admin-gated. Inserts a `classes` row with `teacher_id` set to
+    the caller, `archived=false`, and a freshly-generated UNIQUE
+    `join_code`. The response shape mirrors a `GET /v1/teacher/classes`
+    item (with zero counts) so the frontend can reuse it directly.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="class store unavailable",
+        )
+
+    caller_id = str(user.get("sub") or "")
+    try:
+        join_code = _generate_unique_join_code(supabase, body.subject)
+        payload = {
+            "teacher_id": caller_id,
+            "name": body.name,
+            "subject": body.subject,
+            "archived": False,
+            "join_code": join_code,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        resp = supabase.table("classes").insert(payload).execute()
+        rows = getattr(resp, "data", None) or []
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.warning("class_create_failed", error=str(e), teacher=caller_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="class create failed",
+        ) from e
+
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="class create failed",
+        )
+    created = rows[0]
+    return {
+        "id": str(created["id"]),
+        "name": created.get("name"),
+        "subject": created.get("subject"),
+        "join_code": created.get("join_code"),
+        "student_count": 0,
+        "pending_count": 0,
+    }
+
+
+@router.get("/classes/{class_id}")
+async def get_class_detail(
+    class_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Return a class's roster, pending join requests, and courses.
+
+    Powers the teacher class-management screen (`teacher-authoring.md`
+    §9). Teacher/admin-gated; ownership is enforced explicitly (the
+    service role bypasses RLS) — a missing OR non-owned class -> 404.
+
+    `roster` is `class_members` with `status='active'`; `pending` is
+    `status='pending'`. Student `name` comes from `profiles.full_name`;
+    `email` is a best-effort `auth.users` lookup per student.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="class not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    cls = _load_owned_class(supabase, str(class_id), caller_id)
+
+    try:
+        m_resp = (
+            supabase.table("class_members")
+            .select("student_id,status,requested_at,approved_at")
+            .eq("class_id", str(class_id))
+            .execute()
+        )
+        members = getattr(m_resp, "data", None) or []
+
+        student_ids = [str(m["student_id"]) for m in members if m.get("student_id")]
+        names: dict[str, str | None] = {}
+        if student_ids:
+            p_resp = (
+                supabase.table("profiles")
+                .select("id,full_name")
+                .in_("id", student_ids)
+                .execute()
+            )
+            for p in getattr(p_resp, "data", None) or []:
+                names[str(p["id"])] = p.get("full_name")
+
+        cc_resp = (
+            supabase.table("class_courses")
+            .select("course_id")
+            .eq("class_id", str(class_id))
+            .execute()
+        )
+        course_ids = [
+            str(r["course_id"])
+            for r in getattr(cc_resp, "data", None) or []
+            if r.get("course_id")
+        ]
+        courses: list[dict[str, Any]] = []
+        if course_ids:
+            co_resp = (
+                supabase.table("courses")
+                .select("id,title")
+                .in_("id", course_ids)
+                .execute()
+            )
+            courses = [
+                {"id": str(c["id"]), "title": c.get("title")}
+                for c in getattr(co_resp, "data", None) or []
+            ]
+    except Exception as e:  # noqa: BLE001
+        log.warning("class_detail_failed", error=str(e), class_id=str(class_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="class detail lookup failed",
+        ) from e
+
+    roster: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    for m in members:
+        sid = str(m.get("student_id") or "")
+        common = {
+            "student_id": sid,
+            "name": names.get(sid),
+            "email": _student_email(supabase, sid),
+        }
+        if m.get("status") == "active":
+            roster.append({**common, "joined_at": m.get("approved_at")})
+        elif m.get("status") == "pending":
+            pending.append({**common, "requested_at": m.get("requested_at")})
+
+    return {
+        "id": str(cls["id"]),
+        "name": cls.get("name"),
+        "subject": cls.get("subject"),
+        "join_code": cls.get("join_code"),
+        "roster": roster,
+        "pending": pending,
+        "courses": courses,
+    }
+
+
+@router.post("/classes/{class_id}/members/{student_id}/approve")
+async def approve_class_member(
+    class_id: UUID,
+    student_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Approve a pending student — the §14 consent checkpoint.
+
+    Teacher/admin-gated; the class must be owned by the caller (or caller
+    is admin) else 404. Flips the `class_members` row keyed
+    (class_id, student_id) to `status='active'` and records
+    `approved_by` / `approved_at` (`teacher-authoring.md` §14). No such
+    membership row -> 404.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="class not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_class(supabase, str(class_id), caller_id)
+
+    try:
+        resp = (
+            supabase.table("class_members")
+            .update(
+                {
+                    "status": "active",
+                    "approved_by": caller_id,
+                    "approved_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("class_id", str(class_id))
+            .eq("student_id", str(student_id))
+            .execute()
+        )
+        rows = getattr(resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "class_member_approve_failed",
+            error=str(e),
+            class_id=str(class_id),
+            student_id=str(student_id),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="member approve failed",
+        ) from e
+
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="member not found"
+        )
+    return {"ok": True}
+
+
+@router.delete(
+    "/classes/{class_id}/members/{student_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_class_member(
+    class_id: UUID,
+    student_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> None:
+    """Remove a student from a class (`teacher-authoring.md` §9).
+
+    Teacher/admin-gated; the class must be owned by the caller (or caller
+    is admin) else 404. Deletes the `class_members` row keyed
+    (class_id, student_id) — this serves both declining a pending request
+    and removing an active student. Returns HTTP 204.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="class not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_class(supabase, str(class_id), caller_id)
+
+    try:
+        (
+            supabase.table("class_members")
+            .delete()
+            .eq("class_id", str(class_id))
+            .eq("student_id", str(student_id))
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "class_member_remove_failed",
+            error=str(e),
+            class_id=str(class_id),
+            student_id=str(student_id),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="member remove failed",
+        ) from e
+    return None

@@ -11,6 +11,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     admin,
     auth,
+    classes,
     courses,
     flashcards,
     health,
@@ -34,6 +35,7 @@ v1.include_router(health.router)
 v1.include_router(admin.router)
 v1.include_router(auth.router)
 v1.include_router(teacher.router)
+v1.include_router(classes.router)
 v1.include_router(me.router)
 v1.include_router(courses.router)
 v1.include_router(sessions.router)

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
 
 import { AccountMenu } from '@/components/account-menu';
@@ -17,13 +17,20 @@ import { useMe } from '@/hooks/use-me';
  */
 export function TeachChrome({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname() ?? '/teach';
   const { data: me } = useMe();
   const name = me?.full_name ?? 'Teacher';
+
+  const page = pathname.startsWith('/teach/classes')
+    ? 'Class'
+    : pathname.startsWith('/teach/courses')
+      ? 'Course'
+      : 'Home';
 
   return (
     <div className="flex h-screen flex-col bg-paper">
       <TopNav
-        crumb={{ section: 'Teach', page: 'Home' }}
+        crumb={{ section: 'Teach', page }}
         streak={0}
         name={name}
         onLogo={() => router.push('/teach')}

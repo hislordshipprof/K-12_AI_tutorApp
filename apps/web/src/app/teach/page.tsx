@@ -1,8 +1,12 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 
 import { Icon, type IconName } from '@/components/aria/icon';
+import { CreateClassModal } from '@/components/teach/create-class-modal';
 import { displayName, useMe } from '@/hooks/use-me';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -42,6 +46,9 @@ const DEFAULT_COURSE_COLOR =
 
 export default function TeachHomePage() {
   const { data: me } = useMe();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const [createOpen, setCreateOpen] = useState(false);
 
   const {
     data: classes = [],
@@ -92,6 +99,7 @@ export default function TeachHomePage() {
             <div className="flex flex-wrap gap-2.5">
               <button
                 type="button"
+                onClick={() => setCreateOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-white/[0.18]"
               >
                 <Icon name="plus" size={15} /> New class
@@ -129,6 +137,7 @@ export default function TeachHomePage() {
                 : 'Classes you teach'
             }
             action="+ New class"
+            onAction={() => setCreateOpen(true)}
           />
           {classesError ? (
             <LoadError what="classes" />
@@ -146,6 +155,7 @@ export default function TeachHomePage() {
               title="No classes yet"
               body="Create a class and share its join code so students can enrol."
               cta="New class"
+              onCta={() => setCreateOpen(true)}
             />
           )}
         </section>
@@ -181,6 +191,16 @@ export default function TeachHomePage() {
           )}
         </section>
       </div>
+
+      <CreateClassModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={(cls) => {
+          setCreateOpen(false);
+          queryClient.invalidateQueries({ queryKey: ['teacher-classes'] });
+          router.push(`/teach/classes/${cls.id}`);
+        }}
+      />
     </div>
   );
 }
@@ -229,10 +249,12 @@ function SectHd({
   title,
   sub,
   action,
+  onAction,
 }: {
   title: string;
   sub?: string;
   action?: string;
+  onAction?: () => void;
 }) {
   return (
     <div className="mb-[18px] flex flex-wrap items-end justify-between gap-3">
@@ -245,6 +267,7 @@ function SectHd({
       {action && (
         <button
           type="button"
+          onClick={onAction}
           className="text-[13px] font-semibold text-indigo transition-colors hover:text-indigo-deep"
         >
           {action}
@@ -256,7 +279,10 @@ function SectHd({
 
 function ClassCard({ cls }: { cls: TeacherClass }) {
   return (
-    <div className="flex flex-col rounded-[20px] border border-border bg-white p-5 shadow-sm transition-all duration-200 hover:-translate-y-[2px] hover:shadow-md">
+    <Link
+      href={`/teach/classes/${cls.id}`}
+      className="flex flex-col rounded-[20px] border border-border bg-white p-5 shadow-sm transition-all duration-200 hover:-translate-y-[2px] hover:shadow-md"
+    >
       <div className="flex items-center gap-3">
         <div className="grid h-11 w-11 flex-shrink-0 place-items-center rounded-xl bg-indigo-soft text-indigo">
           <Icon name="users" size={22} />
@@ -292,7 +318,7 @@ function ClassCard({ cls }: { cls: TeacherClass }) {
           No pending requests
         </div>
       )}
-    </div>
+    </Link>
   );
 }
 
@@ -356,11 +382,13 @@ function EmptyState({
   title,
   body,
   cta,
+  onCta,
 }: {
   icon: IconName;
   title: string;
   body: string;
   cta: string;
+  onCta?: () => void;
 }) {
   return (
     <div className="flex flex-col items-center rounded-[20px] border border-dashed border-border-2 bg-white/60 px-6 py-12 text-center">
@@ -373,6 +401,7 @@ function EmptyState({
       <div className="mt-1 max-w-[340px] text-[13px] text-ink-3">{body}</div>
       <button
         type="button"
+        onClick={onCta}
         className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-indigo px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-deep"
       >
         <Icon name="plus" size={15} /> {cta}

@@ -91,7 +91,11 @@ export function TeachRail() {
           key={it.id}
           iconName={it.icon}
           label={it.label}
-          active={it.id === 'home' && pathname === '/teach'}
+          active={
+            (it.id === 'home' && pathname === '/teach') ||
+            (it.id === 'classes' && pathname.startsWith('/teach/classes')) ||
+            (it.id === 'courses' && pathname.startsWith('/teach/courses'))
+          }
           onClick={() => go(it.id)}
         />
       ))}

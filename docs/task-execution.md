@@ -41,7 +41,7 @@ work that can proceed alongside Phase 0.
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
-| 3 — Admin board | 3.1–3.5 | 1/5 — 3.1 done (/teach scaffold + role gate + teacher home) |
+| 3 — Admin board | 3.1–3.5 | 2/5 — 3.1 (/teach scaffold + role gate), 3.2 (class management + join approvals) done |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
 
@@ -834,7 +834,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   > No migration. The `New class` / `New course` actions are visual only
   > — the create flows are tasks 3.2 / 3.3.
 
-### [ ] 3.2 — Class management + join approvals
+### [x] 3.2 — Class management + join approvals
 - **Why:** teachers create classes, share codes, and approve students
   (the consent gate).
 - **Build:** create class + join code; roster; **pending join requests
@@ -844,7 +844,32 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   student.
 - **Verify:** `pnpm verify`; full join→approve loop with a test student.
 - **Depends on:** 3.1.
-- **Status:** not started
+- **Status:** done (2026-05-16).
+  API: `app/api/v1/teacher.py` gained `POST /v1/teacher/classes` (create
+  — mints a unique `PREFIX-XXXX` join code from an unambiguous alphabet),
+  `GET /v1/teacher/classes/{id}` (roster + pending split + assigned
+  courses; ownership-gated → 404 if not the caller's), `POST
+  .../members/{sid}/approve` (the §14 consent checkpoint — sets
+  `status='active'`, `approved_by`, `approved_at`) and `DELETE
+  .../members/{sid}` (decline a pending / remove an active student). New
+  `app/api/v1/classes.py` adds the student-side `POST /v1/classes/join`
+  — redeem a code → idempotent `pending` membership.
+  Web: `app/teach/classes/[id]/page.tsx` is the class detail screen — a
+  dark command-bar header with a copyable join code, a coral-accented
+  Pending-requests card with Approve/Decline, the active Roster with a
+  confirm-gated Remove, and an Assigned-courses section; loading +
+  not-found states. `components/teach/create-class-modal.tsx` is the
+  New-class dialog (popped from `/teach`). `/teach` class cards now link
+  through; the teacher chrome's breadcrumb + rail track the class route.
+  >
+  > **Verified.** `pnpm verify` → 17/17 + 9/9, ALL CHECKS PASS.
+  > `pnpm api:test` → 345 passed, 10 skipped (331 baseline + 14 new tests
+  > in `test_class_management.py`). Live full loop on the real DB: a
+  > teacher created a class via the modal, two students joined by code
+  > (`POST /v1/classes/join` → pending), the teacher saw both pending,
+  > **approved** one (DB confirmed `status='active'` + `approved_by` +
+  > `approved_at`), **declined** the other, and **removed** the approved
+  > student from the roster. No migration.
 
 ### [ ] 3.3 — Course/unit management + material upload
 - **Why:** teachers need to create a course (subject, grade band,
