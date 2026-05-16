@@ -22,22 +22,48 @@ from __future__ import annotations
 import functools
 import secrets
 import string
+import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any
 from uuid import UUID
 
 from anyio import to_thread
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, Field
 
 from app.core.logging import get_logger
 from app.core.rate_limit import RateLimitExceeded, ingest_acquire
 from app.core.security import get_user_role, require_role
 from app.core.supabase import get_supabase
+from app.pipeline.confirm import ConfirmError, confirm_breakdown
 from app.pipeline.ingest import IngestRejected, ingest_material, validate_upload
+from app.pipeline.jobs import run_job
+from app.pipeline.segment import ProposedTopic, segment_unit
 
 router = APIRouter(prefix="/teacher", tags=["teacher"])
 log = get_logger(__name__)
+
+
+# ── Segment-job stage handlers (teacher-authoring.md §6) ────────────────────
+# A `segment` job's stage sequence is `converting` -> `comprehending`
+# (`jobs.STAGE_SEQUENCES`). `converting` stays UNREGISTERED — task 3.3
+# already converts each material on upload, so it is a runner no-op here.
+# `comprehending` runs the (minutes-long) multimodal comprehension call.
+async def _comprehending_stage(job: dict[str, Any]) -> None:
+    """Stage handler — comprehend the job's unit into a `unit_segmentations`
+    row (`segment.segment_unit`)."""
+    await segment_unit(str(job["unit_id"]))
+
+
+_SEGMENT_HANDLERS = {"comprehending": _comprehending_stage}
 
 # Unambiguous join-code alphabet — no O/0/I/1 so a code is easy to read
 # aloud and type (`teacher-authoring.md` §9).
@@ -292,6 +318,17 @@ class UnitCreate(BaseModel):
     """Request body for `POST /v1/teacher/courses/{course_id}/units`."""
 
     name: str = Field(min_length=1)
+
+
+class ConfirmTopicsRequest(BaseModel):
+    """Request body for `POST /v1/teacher/units/{unit_id}/topics`.
+
+    `topics` is the teacher's (possibly edited) breakdown — each element is
+    a `ProposedTopic` (`segment.py`), so FastAPI validates the shape and a
+    malformed topic 422s before the handler runs.
+    """
+
+    topics: list[ProposedTopic]
 
 
 def _course_owner_for_job(supabase: Any, job: dict[str, Any]) -> str | None:
@@ -1068,11 +1105,14 @@ async def get_unit_detail(
     unit_id: UUID,
     user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
 ) -> dict[str, Any]:
-    """Return a unit's lesson materials (`§6`/`§9`).
+    """Return a unit's lesson materials + its latest segment job (`§6`/`§9`).
 
     Teacher/admin-gated; the unit's course must be owned by the caller (or
     caller is admin) else 404. Materials are ordered by `uploaded_at`;
-    `status` is the row's `conversion_status`.
+    `status` is the row's `conversion_status`. `segment_job` is the unit's
+    most recent `pipeline_jobs` row with `kind='segment'` (shaped
+    `{id,status,stage}`) so the unit screen can show / poll segmentation
+    progress — `null` when the unit has never been segmented.
     """
     supabase = get_supabase()
     if supabase is None:
@@ -1092,12 +1132,33 @@ async def get_unit_detail(
             .execute()
         )
         materials = getattr(m_resp, "data", None) or []
+
+        j_resp = (
+            supabase.table("pipeline_jobs")
+            .select("id,status,stage")
+            .eq("unit_id", str(unit_id))
+            .eq("kind", "segment")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        job_rows = getattr(j_resp, "data", None) or []
     except Exception as e:  # noqa: BLE001
         log.warning("unit_detail_failed", error=str(e), unit_id=str(unit_id))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="unit detail lookup failed",
         ) from e
+
+    segment_job = (
+        {
+            "id": str(job_rows[0]["id"]),
+            "status": job_rows[0].get("status"),
+            "stage": job_rows[0].get("stage"),
+        }
+        if job_rows
+        else None
+    )
 
     return {
         "id": str(unit["id"]),
@@ -1113,6 +1174,7 @@ async def get_unit_detail(
             }
             for m in materials
         ],
+        "segment_job": segment_job,
     }
 
 
@@ -1185,3 +1247,277 @@ async def upload_materials(
         )
 
     return results
+
+
+# ─── segmentation pipeline (`/teach/.../breakdown`, `teacher-authoring.md`
+# §6/§10/§13) ───────────────────────────────────────────────────────────────
+@router.post(
+    "/units/{unit_id}/segment", status_code=status.HTTP_202_ACCEPTED
+)
+async def segment_unit_endpoint(
+    unit_id: UUID,
+    background: BackgroundTasks,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Enqueue a `segment` pipeline job for a unit (`§6`/`§10`).
+
+    Teacher/admin-gated; the unit's course must be owned by the caller (or
+    caller is admin) else 404. The unit must have at least one material and
+    EVERY material must be `converted` — a still-converting material 400s
+    (§13). At most one segment job runs per unit at a time: if a `queued`
+    or `running` segment job already exists it is returned as-is, without
+    starting another (§13). Otherwise a `pipeline_jobs` row is inserted and
+    `run_job` walks it (the minutes-long comprehension call) in the
+    background. Returns `{job_id, status}` with HTTP 202.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="unit not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_unit(supabase, str(unit_id), caller_id)
+
+    try:
+        m_resp = (
+            supabase.table("lesson_materials")
+            .select("id,conversion_status")
+            .eq("unit_id", str(unit_id))
+            .execute()
+        )
+        materials = getattr(m_resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning("segment_materials_failed", error=str(e), unit_id=str(unit_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="material lookup failed",
+        ) from e
+
+    if not materials:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="unit has no material to segment",
+        )
+    if any(m.get("conversion_status") != "converted" for m in materials):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="material is still converting",
+        )
+
+    try:
+        # §13 — at most one in-flight segment job per unit. Return any
+        # existing queued/running job instead of starting a second.
+        inflight_resp = (
+            supabase.table("pipeline_jobs")
+            .select("id,status,stage,kind")
+            .eq("unit_id", str(unit_id))
+            .eq("kind", "segment")
+            .in_("status", ["queued", "running"])
+            .execute()
+        )
+        inflight = getattr(inflight_resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning("segment_job_lookup_failed", error=str(e), unit_id=str(unit_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="segment job lookup failed",
+        ) from e
+
+    if inflight:
+        existing = inflight[0]
+        return {"job_id": str(existing["id"]), "status": existing.get("status")}
+
+    try:
+        await ingest_acquire(caller_id)
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
+
+    job_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        supabase.table("pipeline_jobs").insert(
+            {
+                "id": job_id,
+                "kind": "segment",
+                "unit_id": str(unit_id),
+                "status": "queued",
+                "stage": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+        ).execute()
+    except Exception as e:  # noqa: BLE001
+        log.warning("segment_job_insert_failed", error=str(e), unit_id=str(unit_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="segment job create failed",
+        ) from e
+
+    background.add_task(run_job, job_id, handlers=_SEGMENT_HANDLERS)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@router.get("/units/{unit_id}/segmentation")
+async def get_unit_segmentation(
+    unit_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Return a unit's latest proposed breakdown (`§5.7`/`§6`/`§10`).
+
+    Teacher/admin-gated; the unit's course must be owned by the caller (or
+    caller is admin) else 404. Powers the breakdown-review screen — the
+    latest `unit_segmentations` row's proposed `topics`, the pages the
+    comprehension stage `teach=false`-excluded, and the unit's materials
+    (indexed in `uploaded_at` order, the order segmentation used). No
+    segmentation row -> 404.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="unit not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_unit(supabase, str(unit_id), caller_id)
+
+    try:
+        s_resp = (
+            supabase.table("unit_segmentations")
+            .select("id,comprehension,proposed,status,created_at")
+            .eq("unit_id", str(unit_id))
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        seg_rows = getattr(s_resp, "data", None) or []
+        if not seg_rows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="no segmentation",
+            )
+        seg = seg_rows[0]
+
+        m_resp = (
+            supabase.table("lesson_materials")
+            .select("id,filename,uploaded_at")
+            .eq("unit_id", str(unit_id))
+            .order("uploaded_at")
+            .execute()
+        )
+        materials = getattr(m_resp, "data", None) or []
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.warning("segmentation_lookup_failed", error=str(e), unit_id=str(unit_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="segmentation lookup failed",
+        ) from e
+
+    proposed = seg.get("proposed") or {}
+    comprehension = seg.get("comprehension") or {}
+    excluded = [
+        {
+            "material_idx": p.get("material_idx"),
+            "page_idx": p.get("page_idx"),
+            "reason": p.get("reason"),
+        }
+        for p in (comprehension.get("pages") or [])
+        if isinstance(p, dict) and p.get("teach") is False
+    ]
+
+    return {
+        "status": seg.get("status"),
+        "topics": proposed.get("topics") or [],
+        "excluded": excluded,
+        "materials": [
+            {"idx": i, "filename": m.get("filename")}
+            for i, m in enumerate(materials)
+        ],
+        "empty_reason": proposed.get("empty_reason"),
+    }
+
+
+@router.post("/units/{unit_id}/topics")
+async def confirm_unit_topics(
+    unit_id: UUID,
+    body: ConfirmTopicsRequest,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Confirm a unit's (edited) breakdown — materialise `topics` (`§5.7`/`§10`).
+
+    Teacher/admin-gated; the unit's course must be owned by the caller (or
+    caller is admin) else 404. Writes the teacher's edited `topics` onto the
+    latest `unit_segmentations` row (`status='confirmed'`), then calls
+    `confirm_breakdown` — which reads that row back and upserts `topics` +
+    `topic_pages`. No segmentation row -> 404. A `ConfirmError` (e.g. an
+    empty breakdown) -> 400. Idempotent: a re-confirm updates rather than
+    duplicates. Returns `{topic_ids, created, updated, page_count}`.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="unit not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_unit(supabase, str(unit_id), caller_id)
+
+    try:
+        s_resp = (
+            supabase.table("unit_segmentations")
+            .select("id,proposed,created_at")
+            .eq("unit_id", str(unit_id))
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        seg_rows = getattr(s_resp, "data", None) or []
+        if not seg_rows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="no segmentation",
+            )
+        seg = seg_rows[0]
+
+        existing_proposed = seg.get("proposed") or {}
+        (
+            supabase.table("unit_segmentations")
+            .update(
+                {
+                    "proposed": {
+                        **existing_proposed,
+                        "topics": [t.model_dump() for t in body.topics],
+                    },
+                    "status": "confirmed",
+                }
+            )
+            .eq("id", str(seg["id"]))
+            .execute()
+        )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.warning("topics_confirm_update_failed", error=str(e), unit_id=str(unit_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="segmentation update failed",
+        ) from e
+
+    try:
+        result = await confirm_breakdown(str(unit_id))
+    except ConfirmError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    return {
+        "topic_ids": result.topic_ids,
+        "created": result.created,
+        "updated": result.updated,
+        "page_count": result.page_count,
+    }

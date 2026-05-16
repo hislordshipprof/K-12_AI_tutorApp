@@ -26,12 +26,19 @@ interface Material {
   status: ConversionStatus;
 }
 
+interface SegmentJob {
+  id: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  stage: string | null;
+}
+
 interface UnitDetail {
   id: string;
   name: string;
   course_id: string;
   course_title: string;
   materials: Material[];
+  segment_job: SegmentJob | null;
 }
 
 interface StagedFile {
@@ -54,6 +61,12 @@ export default function UnitDetailPage() {
     queryKey: ['teacher-unit', unitId],
     queryFn: () => api<UnitDetail>(`/v1/teacher/units/${unitId}`),
     enabled: unitId.length > 0,
+    // While a segment job is in flight, poll so the breakdown panel
+    // advances converting → comprehending → done without a manual refresh.
+    refetchInterval: (query) => {
+      const s = query.state.data?.segment_job?.status;
+      return s === 'queued' || s === 'running' ? 2500 : false;
+    },
   });
 
   const [staged, setStaged] = useState<StagedFile[]>([]);
@@ -274,6 +287,205 @@ export default function UnitDetailPage() {
             </div>
           )}
         </section>
+
+        {/* TOPIC BREAKDOWN */}
+        <section>
+          <SectHd
+            title="Topic breakdown"
+            sub="The model reads your material and proposes a set of topics — you review and confirm them."
+          />
+          <BreakdownPanel
+            courseId={data.course_id}
+            unitId={unitId}
+            materialCount={materials.length}
+            segmentJob={data.segment_job}
+          />
+        </section>
+      </div>
+    </div>
+  );
+}
+
+/* ─── topic-breakdown panel (task 3.4) ──────────────────────────────────────── */
+
+function BreakdownPanel({
+  courseId,
+  unitId,
+  materialCount,
+  segmentJob,
+}: {
+  courseId: string;
+  unitId: string;
+  materialCount: number;
+  segmentJob: SegmentJob | null;
+}) {
+  const queryClient = useQueryClient();
+
+  const startMut = useMutation({
+    mutationFn: () =>
+      api(`/v1/teacher/units/${unitId}/segment`, { method: 'POST' }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['teacher-unit', unitId] }),
+  });
+
+  if (materialCount === 0) {
+    return (
+      <div className="flex items-center gap-3 rounded-[20px] border border-dashed border-border-2 bg-white/60 px-5 py-6 text-[13px] text-ink-3">
+        <div className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl bg-paper-2 text-ink-3">
+          <Icon name="course" size={18} />
+        </div>
+        Upload this unit&apos;s material first — then generate the breakdown.
+      </div>
+    );
+  }
+
+  const status = segmentJob?.status ?? null;
+
+  if (status === 'queued' || status === 'running') {
+    const activeStage =
+      segmentJob?.stage === 'comprehending' ? 'comprehending' : 'converting';
+    return <SegmentProgress activeStage={activeStage} />;
+  }
+
+  if (status === 'succeeded') {
+    return (
+      <div className="flex flex-wrap items-center gap-4 rounded-[20px] border border-border bg-white p-5 shadow-sm">
+        <div className="grid h-12 w-12 flex-shrink-0 place-items-center rounded-2xl bg-mint-soft text-[#1C7A47]">
+          <Icon name="check" size={24} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="font-display text-[15px] font-bold text-ink">
+            Breakdown ready
+          </div>
+          <div className="mt-0.5 text-[13px] text-ink-3">
+            The model proposed a set of topics from your material. Review,
+            edit, and confirm them to create the lessons.
+          </div>
+        </div>
+        <Link
+          href={`/teach/courses/${courseId}/units/${unitId}/breakdown`}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-indigo px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-deep"
+        >
+          Review breakdown <Icon name="chev" size={15} />
+        </Link>
+      </div>
+    );
+  }
+
+  if (status === 'failed') {
+    return (
+      <div className="rounded-[20px] border border-coral/30 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="grid h-10 w-10 flex-shrink-0 place-items-center rounded-xl bg-coral-soft text-coral">
+            <Icon name="close" size={20} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-ink">
+              Segmentation didn&apos;t finish
+            </div>
+            <div className="text-[13px] text-ink-3">
+              Something went wrong reading the material. Try again.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => startMut.mutate()}
+            disabled={startMut.isPending}
+            className="rounded-xl bg-indigo px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-deep disabled:opacity-50"
+          >
+            {startMut.isPending ? 'Starting…' : 'Try again'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // idle — material uploaded, no segment job yet.
+  return (
+    <div className="flex flex-wrap items-center gap-4 rounded-[20px] border border-border bg-white p-5 shadow-sm">
+      <div className="grid h-12 w-12 flex-shrink-0 place-items-center rounded-2xl bg-indigo-soft text-indigo">
+        <Icon name="course" size={24} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="font-display text-[15px] font-bold text-ink">
+          Generate the topic breakdown
+        </div>
+        <div className="mt-0.5 text-[13px] text-ink-3">
+          When you&apos;ve added every file for this unit, the model reads
+          them and proposes the topics. This takes a couple of minutes.
+        </div>
+        {startMut.isError && (
+          <div className="mt-1.5 text-[12px] font-medium text-coral">
+            Couldn&apos;t start segmentation — please try again.
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={() => startMut.mutate()}
+        disabled={startMut.isPending}
+        className="inline-flex items-center gap-1.5 rounded-xl bg-indigo px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-deep disabled:opacity-50"
+      >
+        <Icon name="plus" size={15} />
+        {startMut.isPending ? 'Starting…' : 'Generate breakdown'}
+      </button>
+    </div>
+  );
+}
+
+function SegmentProgress({
+  activeStage,
+}: {
+  activeStage: 'converting' | 'comprehending';
+}) {
+  const steps: { key: 'converting' | 'comprehending'; label: string }[] = [
+    { key: 'converting', label: 'Preparing material' },
+    { key: 'comprehending', label: 'Reading & proposing topics' },
+  ];
+  const activeIdx = steps.findIndex((s) => s.key === activeStage);
+
+  return (
+    <div className="rounded-[20px] border border-border bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-3">
+        <div className="grid h-10 w-10 flex-shrink-0 place-items-center rounded-xl bg-indigo-soft text-indigo">
+          <span className="block h-4 w-4 animate-spin rounded-full border-2 border-indigo border-t-transparent" />
+        </div>
+        <div>
+          <div className="text-sm font-semibold text-ink">
+            Generating the topic breakdown…
+          </div>
+          <div className="text-[13px] text-ink-3">
+            This runs in the background — you can leave this page.
+          </div>
+        </div>
+      </div>
+      <div className="mt-4 space-y-2">
+        {steps.map((s, i) => {
+          const done = i < activeIdx;
+          const active = i === activeIdx;
+          return (
+            <div key={s.key} className="flex items-center gap-2.5">
+              <span
+                className={cn(
+                  'grid h-5 w-5 flex-shrink-0 place-items-center rounded-full text-[10px] font-bold',
+                  done && 'bg-mint text-white',
+                  active && 'bg-indigo text-white',
+                  !done && !active && 'bg-paper-2 text-ink-3',
+                )}
+              >
+                {done ? <Icon name="check" size={11} /> : i + 1}
+              </span>
+              <span
+                className={cn(
+                  'text-[13px]',
+                  active ? 'font-semibold text-ink' : 'text-ink-3',
+                )}
+              >
+                {s.label}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

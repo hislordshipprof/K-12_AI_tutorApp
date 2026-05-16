@@ -41,7 +41,7 @@ work that can proceed alongside Phase 0.
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
-| 3 — Admin board | 3.1–3.5 | 3/5 — 3.1 (/teach scaffold + role gate), 3.2 (class management + join approvals), 3.3 (course/unit management + material upload) done |
+| 3 — Admin board | 3.1–3.5 | 4/5 — 3.1 (/teach scaffold + role gate), 3.2 (class management + join approvals), 3.3 (course/unit management + material upload), 3.4 (segmentation job UI + confirm-breakdown) done |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
 
@@ -929,7 +929,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   > verification artifact (alongside the existing `e2e-fluids-demo`).
   > No migration, no web/API schema change. Next: 3.4.
 
-### [ ] 3.4 — Segmentation job UI + confirm-breakdown screen
+### [x] 3.4 — Segmentation job UI + confirm-breakdown screen
 - **Why:** the teacher must watch the segment job and confirm/edit the
   proposed breakdown — the key human checkpoint.
 - **Build:** job-progress polling + the done-badge; the confirm screen —
@@ -940,7 +940,57 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   confirms → `topics` + `topic_pages` rows created.
 - **Verify:** `pnpm verify`; run the confirm flow on the Fluids deck.
 - **Depends on:** 3.3, 2.2.
-- **Status:** not started
+- **Status:** done (2026-05-16).
+  Web: the unit page gained a "Topic breakdown" section
+  (`BreakdownPanel`) that drives off the unit's latest segment job —
+  idle ("Generate breakdown" button — the explicit trigger), running (a
+  converting → comprehending progress card; the unit query polls every
+  2.5 s while a job is in flight), succeeded ("Review breakdown"), and
+  failed (retry). New screen
+  `app/teach/courses/[id]/units/[unitId]/breakdown/page.tsx` — the
+  confirm checkpoint: a per-topic card editor (inline rename, expandable
+  summary/key-points/pages, **split / merge-with-next / reorder / drop**),
+  an **excluded-pages** panel with a per-row "re-include into [topic]"
+  control, and a sticky Confirm bar. Edits are local React state, sent
+  in the `POST .../topics` body on Confirm.
+  API: `app/api/v1/teacher.py` gained `POST /v1/teacher/units/{id}/segment`
+  (enqueues a `pipeline_jobs` `segment` row + runs it via
+  `BackgroundTasks` → `jobs.run_job`; rejects 400 on no/unconverted
+  material; returns an existing in-flight job rather than starting a
+  second — §13; `ingest_acquire`-rate-limited), `GET .../units/{id}/
+  segmentation` (the latest proposed breakdown + the `teach=false`
+  excluded pages + the materials list), and `POST .../units/{id}/topics`
+  (writes the edited topics onto the latest `unit_segmentations` row,
+  `status='confirmed'`, then calls task-2.7's `confirm_breakdown`).
+  `get_unit_detail` now also returns `segment_job`. The `segment` job's
+  `comprehending` stage handler runs task-2.2's `segment_unit`;
+  `converting` is an unregistered no-op (3.3 converts on upload).
+  >
+  > DECISION: the teacher's edits travel in the `POST .../topics` body
+  > (client-side until Confirm) — the endpoint persists them onto the
+  > `unit_segmentations` row first, so `confirm_breakdown` (which reads
+  > the row) materialises the EDITED breakdown. No change to the 2.7
+  > `confirm_breakdown` core. The segment job runs in-process via
+  > FastAPI `BackgroundTasks` — fits this app's single-instance scale;
+  > `run_job` is already resumable if the process restarts.
+  >
+  > **Verified.** `pnpm verify` → phase-1 17/17, phase-2 9/9, ALL CHECKS
+  > PASS. `pnpm api:test` → 378 passed, 10 skipped (362 baseline + 16 new
+  > tests in `test_segmentation.py`). `tsc` clean; `next build` ok.
+  > **Live end-to-end on the real cloud DB**: enqueued a segment job on
+  > the unit holding the real `Unit 8 - Fluids` deck → the job ran the
+  > comprehension stage (~2 min, PRO model, 76 pages) → `succeeded` → the
+  > model proposed **7 lesson-sized topics + 15 excluded pages**. Per the
+  > 2026-05-16 granularity decision (see task 2.2) the doc's "~4"
+  > estimate was the CED-grained guess; a 76-slide deck yields ~7-10
+  > lesson-sized beats — accepted. **Edited** topic 1's title, confirmed
+  > via `POST .../topics` → 7 `topics` rows (all `status='draft'`) + 61
+  > `topic_pages` rows; the edit threaded through (DB-confirmed). **Live
+  > in the browser** (signed in as the teacher): the unit page showed
+  > "Breakdown ready", the breakdown screen rendered all 7 topics + 15
+  > excluded pages + the editor controls, and clicking **Confirm**
+  > re-confirmed idempotently (still 7 topics / 61 pages, not 14/122).
+  > No migration. Next: 3.5.
 
 ### [ ] 3.5 — Topic review/edit/preview + versions + publish
 - **Why:** teachers review generated lessons, edit, preview as a
