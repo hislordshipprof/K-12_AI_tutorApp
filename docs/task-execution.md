@@ -40,7 +40,7 @@ work that can proceed alongside Phase 0.
 | 0 — Auth & compliance | 0.1–0.4 | 4/4 — COMPLETE |
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
-| 2 — Authoring pipeline | 2.1–2.8 | 7/8 — 2.1–2.7 done; 2.8 (practice extraction) added 2026-05-16, not started |
+| 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
 | 3 — Admin board | 3.1–3.5 | 0/5 |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
@@ -743,7 +743,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   > paths — now cross-platform — and verify-phase-2 now accepts a 307
   > auth-redirect on Phase-0-gated routes.)
 
-### [ ] 2.8 — Worksheet question extraction (practice quiz source)
+### [x] 2.8 — Worksheet question extraction (practice quiz source)
 - **Why:** 2.6's `quiz_source='practice'` path consumes already-structured
   MCQs — nothing yet turns a teacher's uploaded practice worksheet into
   them, so `quiz_source='practice'` is not usable end-to-end. (Added
@@ -761,7 +761,34 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
 - **Verify:** `pnpm api:test`; run against a practice worksheet (the
   Fluids deck's 2.2 run found 29 practice tags — usable as the fixture).
 - **Depends on:** 2.6, 2.7.
-- **Status:** not started.
+- **Status:** done (2026-05-16).
+  `app/pipeline/practice_extract.py` — `extract_practice_questions` is the
+  pure core (worksheet PDFs + the §2.2 `practice_tags` in → a
+  `PracticeExtractResult` out): it groups the tags by `material_idx`, makes
+  ONE PRO-model `generate_from_pdfs` call per worksheet, and converts each
+  returned question to either a usable `PracticeQuestion` (reused from
+  `quiz.py` — the exact type `generate_quiz`'s practice path consumes) or a
+  `FlaggedQuestion`. `extract_unit_practice` is the DB wrapper — loads the
+  unit's latest segmentation's `practice_tags` + its `lesson_materials`
+  (ordered by `uploaded_at`, so `material_idx` aligns), downloads the
+  worksheet PDFs, runs the core. `practice_extract_script.py` is the live
+  proof. NO HTTP endpoint, NO migration, NO web changes — the output is an
+  in-memory `list[PracticeQuestion]` handed to `generate_quiz`.
+  >
+  > "Flag, don't invent" (acceptance criterion 3) is enforced at two
+  > layers: the model marks a question `extractable=false` when the
+  > material shows no determinable answer, and any `extractable=true` MCQ
+  > that fails the `QuizQuestion` schema is converted to a `FlaggedQuestion`
+  > rather than crashing the run. The consumer chain — the emitted
+  > `PracticeQuestion`s feeding `generate_quiz(quiz_source='practice')` — is
+  > covered by a test.
+  >
+  > **Verified.** `pnpm api:test` → 325 passed, 10 skipped (313 baseline +
+  > 12 new tests). `pnpm verify` → 17/17 + 9/9, ALL CHECKS PASS. Live
+  > `practice_extract_script` on the real Fluids unit (29 practice tags):
+  > 23 extracted as structured MCQs (real worked-solution answers), 6
+  > flagged — 4 genuinely free-response, 2 over-length prompts — zero
+  > answers invented.
 
 ---
 
