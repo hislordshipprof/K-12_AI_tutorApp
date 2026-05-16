@@ -24,6 +24,7 @@ from app.api.v1 import (
     reply,
     sessions,
     sketch,
+    teacher,
     tts,
 )
 
@@ -32,6 +33,7 @@ v1 = APIRouter(prefix="/v1")
 v1.include_router(health.router)
 v1.include_router(admin.router)
 v1.include_router(auth.router)
+v1.include_router(teacher.router)
 v1.include_router(me.router)
 v1.include_router(courses.router)
 v1.include_router(sessions.router)

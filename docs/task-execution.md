@@ -39,7 +39,7 @@ work that can proceed alongside Phase 0.
 | M — Model strategy | M.1–M.3 | 2/3 — M.3 done; M.1 — Live model connects (verified via 0.5); only the user's barge-in check remains |
 | 0 — Auth & compliance | 0.1–0.4 | 4/4 — COMPLETE |
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
-| 1 — Schema foundations | 1.1–1.4 | 3/4 — 1.1 + 1.2 + 1.3 done (schema + RLS + Storage) |
+| 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
 | 2 — Authoring pipeline | 2.1–2.7 | 0/7 |
 | 3 — Admin board | 3.1–3.5 | 0/5 |
 | 4 — Student side | 4.1–4.3 | 0/3 |
@@ -425,7 +425,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   (`on conflict do nothing` + `drop policy if exists`) — re-applied
   cleanly. No API/web code touched; 184 API tests unaffected.
 
-### [ ] 1.4 — `pipeline_jobs` worker harness + role helper
+### [x] 1.4 — `pipeline_jobs` worker harness + role helper
 - **Why:** §6 stages run minutes-long; they need an async runner and a
   status the board can poll. A reusable role-gate helper is needed too.
 - **Build:** a background-job runner that picks up `pipeline_jobs` rows,
@@ -436,7 +436,28 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   live `stage`; the role helper 403s the wrong role.
 - **Verify:** `pnpm api:test` with a fake multi-stage job.
 - **Depends on:** 1.1.
-- **Status:** not started
+- **Status:** done. New `app/pipeline/` package — `jobs.py` `run_job()`
+  is the generic async runner: it walks a job kind's FIXED §4 stage
+  sequence (`segment`: converting→comprehending; `generate`:
+  rendering→generating→validating), persists `stage`+`status='running'`
+  BEFORE each stage so a crash leaves a resumable marker, and on a stage
+  exception persists `status='failed'`+`error` with `stage` at the
+  failing stage. A `failed`/`running` re-run resumes AT the persisted
+  `stage` (earlier stages skipped); a `succeeded` re-run is a no-op.
+  Stage handlers are injectable (`STAGE_HANDLERS` registry ships empty —
+  Phase 2 fills it; unregistered stage = no-op). New `app/api/v1/teacher.py`
+  — `GET /v1/teacher/jobs/{id}`, `require_role('teacher','admin')`-gated;
+  since the service role bypasses RLS it re-verifies ownership by walking
+  `unit_id`/`topic_id`→units→courses.owner_id (admin sees any, non-owner
+  →404). Registered in `router.py`. 9 new tests in
+  `tests/test_pipeline_jobs.py` (fake multi-stage job → succeeded;
+  fail-mid-stage→failed→resume-no-redo proven via per-stage counters;
+  succeeded re-run no-op; endpoint live-stage; admin-any; 404 missing;
+  403 non-teacher; 404 non-owner). `pnpm api:test` → 193 passed, 10
+  skipped (= 184 baseline + 9). `import app.main` clean. No migration,
+  no web changes. NOTE for Phase 2: the enqueue endpoints
+  (`POST .../segment`, `POST .../generate`) and real stage handlers are
+  Phase 2 — 1.4 ships only the runner + the GET poll endpoint.
 
 ---
 
