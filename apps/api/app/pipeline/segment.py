@@ -179,10 +179,19 @@ class PracticeTag(BaseModel):
 
 
 class ProposedTopic(BaseModel):
-    """One proposed topic — title, summary, and its page set."""
+    """One proposed topic — title, summary, its key points, and its page set."""
 
     title: str = Field(..., description="a concise topic title")
     summary: str = Field(..., description="2-3 sentences on what the topic covers")
+    key_points: list[str] = Field(
+        default_factory=list,
+        description=(
+            "the specific teachable points THIS topic must cover — a handful "
+            "per topic, drawn from the sections/pages this topic spans. These "
+            "are what the topic's lesson is generated from and validated "
+            "against, so they must be the topic's OWN points, not the unit's."
+        ),
+    )
     pages: list[PageRef] = Field(
         default_factory=list,
         description="the SET of pages that cover this topic (slides/figures)",
@@ -292,8 +301,18 @@ tag each practice question with the `topic_idx` of the proposed topic it
 assesses (use -1 if it maps to none).
 
 PROPOSED TOPICS. Propose a list of DISTINCT teachable topics. Each topic
-has a title, a 2-3 sentence summary, and a `pages` SET — the pages that
-cover it. A topic's page set:
+has a title, a 2-3 sentence summary, a `key_points` list, and a `pages`
+SET — the pages that cover it.
+
+A topic's `key_points` are the SPECIFIC teachable points THAT topic must
+cover — a handful per topic, drawn from the sections and pages that topic
+spans. They are NOT the whole unit's key points: a "Density" topic's key
+points are about density only, not buoyancy or pressure. Each topic's
+lesson is generated from, and validated against, ITS OWN `key_points`, so
+attribute every point to the single topic it belongs to. The unit-level
+`sections` above stay the full read; `key_points` is the per-topic split.
+
+A topic's page set:
   • may be NON-CONTIGUOUS (covers concept A, then B, then back to A);
   • may SPAN materials (slide pages + notes pages for the same idea);
   • contains only `slides`/figure pages — never prose `notes` or

@@ -49,6 +49,7 @@ from app.pipeline.generate import (  # noqa: E402
     generate_lesson,
     generate_topic,
     slice_comprehension,
+    topic_comprehension_slice,
 )
 
 
@@ -461,6 +462,57 @@ def test_slice_comprehension_handles_empty_comprehension() -> None:
     assert sl.figures == []
 
 
+# ─── topic_comprehension_slice — the Bug B per-topic slice ───────────────────
+def test_topic_comprehension_slice_carries_only_the_topics_own_key_points() -> None:
+    """Bug B: a topic's slice is built from the TOPIC's own `key_points` — a
+    single synthetic section titled with the topic name — NOT the unit-wide
+    `Comprehension.sections`. A 'Density' topic gets only density points, not
+    the unit's buoyancy / pressure / Bernoulli points."""
+    # The unit comprehension carries every section's points (16-ish unit-wide).
+    comprehension = {
+        "sections": [
+            {"title": "Density", "key_points": ["mass over volume"]},
+            {"title": "Pressure", "key_points": ["force per area"]},
+            {"title": "Buoyancy", "key_points": ["net upward force"]},
+        ],
+        "figures": [
+            {"material_idx": 0, "page_idx": 5, "description": "density blocks"},
+            {"material_idx": 0, "page_idx": 99, "description": "other fig"},
+        ],
+    }
+    # ...but THIS topic ("Density") owns only its two key points.
+    sl = topic_comprehension_slice(
+        topic_title="Density",
+        key_points=["Density is mass per unit volume.",
+                    "Denser-than-fluid objects sink."],
+        comprehension=comprehension,
+        claimed=[(0, 5)],
+    )
+    # ONE synthetic section, titled with the topic, with ONLY the topic's points.
+    assert len(sl.sections) == 1
+    assert sl.sections[0].title == "Density"
+    assert sl.sections[0].key_points == [
+        "Density is mass per unit volume.",
+        "Denser-than-fluid objects sink.",
+    ]
+    # The unit-wide section points are NOT in the slice — that was the bug.
+    flat = sl.sections[0].key_points
+    assert "force per area" not in flat
+    assert "net upward force" not in flat
+    # Figures are still filtered to the topic's claimed pages.
+    assert [f.description for f in sl.figures] == ["density blocks"]
+
+
+def test_topic_comprehension_slice_no_key_points_yields_empty_sections() -> None:
+    """A topic with no `key_points` yields no sections — the validator then
+    trivially passes (nothing to grade), no crash."""
+    sl = topic_comprehension_slice(
+        topic_title="X", key_points=[], comprehension={}, claimed=[(0, 0)]
+    )
+    assert sl.sections == []
+    assert sl.figures == []
+
+
 # ─── generate_topic: DB function — the §4 invariant ──────────────────────────
 def _topic_supabase(
     *,
@@ -563,7 +615,7 @@ async def test_generate_topic_writes_version_and_mirrors_content(
     client, inserts, updates = _topic_supabase(
         topic={
             "id": "t1", "name": "Buoyancy", "summary": "Why things float.",
-            "design_notes": None, "unit_id": "u1",
+            "design_notes": None, "unit_id": "u1", "n": 1,
         },
         unit={"id": "u1", "course_id": "c1"},
         course={"id": "c1", "subject": "Physics", "grade_band": "9-12",
@@ -577,6 +629,12 @@ async def test_generate_topic_writes_version_and_mirrors_content(
             "comprehension": {
                 "sections": [{"title": "Buoyant force", "key_points": ["x"]}],
                 "figures": [],
+            },
+            "proposed": {
+                "topics": [
+                    {"title": "Buoyancy", "summary": "x",
+                     "key_points": ["buoyant force is a net upward push"]},
+                ],
             },
             "created_at": "2026-05-16T00:00:00Z",
         }],
@@ -655,6 +713,58 @@ async def test_generate_topic_step_page_is_a_real_topic_pages_id(
     page_ids = {s["page"] for s in content if "page" in s}
     assert page_ids, "no slide-backed step in the persisted content"
     assert page_ids <= {"tp-A", "tp-B"}
+
+
+async def test_generate_topic_slices_from_proposed_topic_key_points(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug B: `generate_topic` builds the slice from THIS topic's own
+    `proposed.topics[n-1].key_points` (located via `topics.n`), so generation
+    sees ONLY the topic's points — not every other topic's unit-wide points."""
+    client, inserts, _updates = _topic_supabase(
+        # This is topic n=2 in the unit — proposed.topics[1].
+        topic={"id": "t2", "name": "Pressure in fluids", "summary": "x",
+               "design_notes": None, "unit_id": "u1", "n": 2},
+        unit={"id": "u1", "course_id": "c1"},
+        course={"id": "c1", "subject": "Physics", "grade_band": "9-12",
+                "teaching_style": None},
+        topic_pages=[],
+        segmentations=[{
+            "id": "seg-1",
+            # The unit comprehension still carries EVERY section's points.
+            "comprehension": {
+                "sections": [
+                    {"title": "Density", "key_points": ["DENSITY POINT"]},
+                    {"title": "Pressure", "key_points": ["PRESSURE POINT"]},
+                ],
+                "figures": [],
+            },
+            "proposed": {
+                "topics": [
+                    {"title": "Density", "summary": "x",
+                     "key_points": ["density is mass per volume"]},
+                    {"title": "Pressure in fluids", "summary": "x",
+                     "key_points": ["fluid pressure rises with depth"]},
+                ],
+            },
+            "created_at": "z",
+        }],
+        existing_versions=[],
+    )
+    monkeypatch.setattr("app.core.supabase.get_supabase", lambda: client)
+
+    capture: dict[str, Any] = {}
+    await generate_topic(
+        "t2", gemini=_fake_gemini(_canned_lesson(4), capture=capture)
+    )
+    prompt = capture["contents"]
+    # The PRESSURE topic's own key point reaches the generation prompt.
+    assert "fluid pressure rises with depth" in prompt
+    # The OTHER topic's key point (Density) does NOT — the bug was every
+    # topic getting the whole unit's points.
+    assert "density is mass per volume" not in prompt
+    # Nor do the raw unit-wide `comprehension.sections` points leak in.
+    assert "DENSITY POINT" not in prompt
 
 
 async def test_generate_topic_missing_topic(

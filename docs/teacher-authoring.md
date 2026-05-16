@@ -160,7 +160,10 @@ unit_segmentations                         -- unit-level comprehension + breakdo
                          -- per-figure descriptions, per-material kind, and
                          -- per-page teach/skip classification
   proposed       jsonb   -- proposed topic breakdown: list of {title, summary,
-                         -- page set, practice-question→topic tags}
+                         -- key_points (the teachable points THIS topic must
+                         -- cover — its own, not the unit's; lesson generation
+                         -- + validation run against these), page set,
+                         -- practice-question→topic tags}
   status         text    -- 'proposed' | 'confirmed'
   created_at     timestamptz
   -- re-segmenting a unit appends a new row; the latest drives the confirm

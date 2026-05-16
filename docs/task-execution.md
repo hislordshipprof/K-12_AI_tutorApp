@@ -40,7 +40,7 @@ work that can proceed alongside Phase 0.
 | 0 — Auth & compliance | 0.1–0.4 | 4/4 — COMPLETE |
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
-| 2 — Authoring pipeline | 2.1–2.7 | 6/7 — 2.1 ingest, 2.2 comprehension+segmentation, 2.3 slide rendering, 2.4 persona builder, 2.5 lesson generation+scenes, 2.6 quiz generation |
+| 2 — Authoring pipeline | 2.1–2.8 | 7/8 — 2.1–2.7 done; 2.8 (practice extraction) added 2026-05-16, not started |
 | 3 — Admin board | 3.1–3.5 | 0/5 |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
@@ -685,7 +685,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   a home (a Phase 3 task, or a new task) before `quiz_source='practice'`
   is end-to-end usable. The `'auto'` path (the default) is complete.
 
-### [ ] 2.7 — Validator + end-to-end pipeline proof
+### [x] 2.7 — Validator + end-to-end pipeline proof
 - **Why:** generated lessons must actually cover the teacher's content;
   the whole pipeline must be proven on a real unit before any UI.
 - **Build:** validator (existing pattern, run vs `comprehension`);
@@ -696,7 +696,72 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   starved topic fails validation and lands `draft` with a gap report.
 - **Verify:** `pnpm api:test`; run the full script, review the lessons.
 - **Depends on:** 2.6.
-- **Status:** not started
+- **Status:** done (2026-05-16).
+  `app/pipeline/validate.py` — `validate_lesson` is the §6 MODEL-GRADED
+  coverage check (the PRO model grades each key point covered/weak/missing
+  against the topic's `comprehension` slice); `generate_and_validate` is
+  the retry-once-then-draft flow (generate → validate, retry ONCE on
+  failure, topic ends `status='draft'` either way; a second failure
+  surfaces the gap report on the topic's latest `generate` job and on the
+  returned result). `app/pipeline/confirm.py` `confirm_breakdown`
+  materialises `topics` + `topic_pages` from the latest
+  `unit_segmentations.proposed`, IDEMPOTENT via the stable key `topics.n`.
+  `app/pipeline/e2e_script.py` chains ingest→segment→confirm→generate→
+  validate on the real Fluids deck off a fixed-slug demo course
+  (`e2e-fluids-demo`, re-runnable; the demo teacher is a real auth user
+  created via the Auth admin API).
+  >
+  > **Two pipeline bugs found by the live e2e were fixed.** *Bug A* — the
+  > PRO model occasionally emits a `tts` past the 120-char cap, a
+  > non-retryable schema failure that aborted the whole multi-topic run;
+  > the `GeneratedStep.tts` cap is relaxed to 240 (the prompt still asks
+  > ≤120 as the quality target). *Bug B* — `comprehension.sections` carry
+  > no per-topic linkage, so every topic was graded against all ~16
+  > unit-wide key points ("Density" scored `covered=1/gaps=15`, no topic
+  > could validate); fixed per the user's decision — `ProposedTopic` now
+  > carries its own `key_points` (a §2.2 schema + prompt change), and both
+  > generation and validation slice from the topic's OWN points
+  > (`topics.n` → `proposed.topics[n-1]`). `slice_comprehension` is kept
+  > unchanged for `quiz.py`'s auto path.
+  >
+  > **Starved-topic mechanism reworked.** Emptying the generator's
+  > comprehension slice does NOT starve it — the generator also reads the
+  > slide images, so a "starved" lesson still validated. Replaced:
+  > `generate_and_validate` takes a `validation_slice` override and the
+  > e2e grades the starved topic against the WHOLE unit's key points,
+  > deterministically guaranteeing real gaps.
+  >
+  > **Acceptance criteria — verified by the live e2e (2026-05-16, exit 0):**
+  > (1) all 6 proposed Fluids topics generated VALIDATED draft lessons —
+  > one ("Buoyancy") exercised the retry (`gaps=1` → regenerate →
+  > `gaps=0`); (2) the starved topic graded against 22 unit-wide key
+  > points scored `covered=4/gaps=18`, retried, and landed `draft` with an
+  > 18-point gap report. `pnpm api:test` → 313 passed, 10 skipped (306
+  > baseline + 7 new tests). `pnpm verify` → phase-1 17/17, phase-2 9/9,
+  > ALL CHECKS PASS. No migration, no web changes. (Build-harness fix
+  > committed separately: the verify scripts hardcoded POSIX `.venv/bin`
+  > paths — now cross-platform — and verify-phase-2 now accepts a 307
+  > auth-redirect on Phase-0-gated routes.)
+
+### [ ] 2.8 — Worksheet question extraction (practice quiz source)
+- **Why:** 2.6's `quiz_source='practice'` path consumes already-structured
+  MCQs — nothing yet turns a teacher's uploaded practice worksheet into
+  them, so `quiz_source='practice'` is not usable end-to-end. (Added
+  2026-05-16 — user decision: the practice path gets its own Phase 2 task,
+  built before Phase 3.)
+- **Build:** extract questions from a unit's `practice`-classified
+  material — for each §2.2 `practice_tags` entry, pull the real question
+  from the worksheet PDF page and produce a structured MCQ
+  (`prompt`/`choices`/`correct_idx`/`explanation`); feed them into 2.6's
+  `generate_quiz` practice path (the `practice_questions` argument).
+- **Acceptance criteria:** a unit with a practice worksheet yields
+  structured MCQs tagged to the right topic; a topic with
+  `quiz_source='practice'` builds its quiz from them; a question with no
+  clear answer key is flagged, not invented.
+- **Verify:** `pnpm api:test`; run against a practice worksheet (the
+  Fluids deck's 2.2 run found 29 practice tags — usable as the fixture).
+- **Depends on:** 2.6, 2.7.
+- **Status:** not started.
 
 ---
 

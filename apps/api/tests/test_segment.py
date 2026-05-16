@@ -68,6 +68,7 @@ def _canned_segmentation() -> UnitSegmentation:
                 ProposedTopic(
                     title=f"8.{n} Topic",
                     summary="A fluids subtopic.",
+                    key_points=[f"key point {n}a", f"key point {n}b"],
                     pages=[PageRef(material_idx=0, page_idx=n)],
                 )
                 for n in range(1, 5)
@@ -181,6 +182,41 @@ async def test_comprehend_unit_empty_breakdown() -> None:
     )
     assert seg.proposed.topics == []
     assert seg.proposed.empty_reason == "nothing teachable found here"
+
+
+# ─── core: per-topic key_points (Bug B) ──────────────────────────────────────
+async def test_proposed_topic_carries_its_own_key_points() -> None:
+    """Each proposed topic carries its OWN `key_points` — the teachable points
+    THAT topic must cover (Bug B: the source of truth for lesson generation +
+    validation, attributed per-topic, not unit-wide)."""
+    seg = await comprehend_unit(
+        [_ONE_PAGE_PDF],
+        [{"filename": "fluids.pptx", "kind": "slides"}],
+        gemini=_fake_gemini(_canned_segmentation()),
+    )
+    for n, t in enumerate(seg.proposed.topics, 1):
+        assert t.key_points == [f"key point {n}a", f"key point {n}b"]
+    # The field round-trips through model_dump (it rides inside `proposed`).
+    dumped = seg.proposed.model_dump()
+    assert dumped["topics"][0]["key_points"] == ["key point 1a", "key point 1b"]
+
+
+def test_proposed_topic_key_points_defaults_empty() -> None:
+    """`key_points` is additive — a topic without it still validates (the
+    field defaults to an empty list)."""
+    t = ProposedTopic(title="X", summary="x")
+    assert t.key_points == []
+
+
+def test_comprehension_prompt_asks_for_per_topic_key_points() -> None:
+    """The comprehension prompt instructs the model to attribute each proposed
+    topic its OWN key points (not the unit's)."""
+    prompt = segment._build_comprehension_prompt(
+        [{"filename": "f.pdf", "kind": "slides"}]
+    )
+    assert "key_points" in prompt
+    # It is explicit that the points are per-topic, not unit-wide.
+    assert "OWN" in prompt or "own" in prompt
 
 
 # ─── core: model escalation threshold ────────────────────────────────────────

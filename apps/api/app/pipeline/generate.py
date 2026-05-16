@@ -160,12 +160,16 @@ class GeneratedStep(BaseModel):
 
     tts: str = Field(
         ...,
-        max_length=120,
+        max_length=240,
         description=(
             "Spoken line for Aria's TTS. Plain prose, two short sentences max, "
             "no HTML and no LaTeX (the TTS layer reads it verbatim)."
         ),
     )
+    # NOTE: the prompt asks for <=120 chars (the spoken-line target); the
+    # schema cap is a looser 240 only so an occasional model overshoot does
+    # not hard-fail parsing and abort a whole multi-topic run. 120 stays the
+    # quality target, 240 is the crash guard.
     html: str = Field(
         ...,
         description=(
@@ -577,6 +581,53 @@ def _parse_lesson(response: Any) -> GeneratedLesson:
 # ─────────────────────────────────────────────────────────────────────────────
 # Comprehension-slice builder — slice the unit `comprehension` for one topic.
 # ─────────────────────────────────────────────────────────────────────────────
+def topic_comprehension_slice(
+    *,
+    topic_title: str,
+    key_points: list[str],
+    comprehension: dict[str, Any],
+    claimed: list[tuple[int, int]],
+) -> ComprehensionSlice:
+    """Build ONE topic's comprehension slice from the topic's OWN key points.
+
+    The §2.2 fix (Bug B): a `ProposedTopic` now carries its own `key_points`
+    — the specific teachable points THAT topic must cover. A topic's slice is
+    therefore those points, NOT the unit-wide `Comprehension.sections` (which
+    hold all ~16 of the unit's key points and were wrongly handed to every
+    topic — so a "Density" lesson was graded against buoyancy/pressure points
+    that are not its job).
+
+    The slice keeps the SAME `{sections, figures}` shape so downstream
+    consumers (`_format_slice`, `validate._flatten_key_points`,
+    `quiz._slice_to_chunks`) need no change — but `sections` is now a SINGLE
+    synthetic `SliceSection` titled with the topic name, carrying the topic's
+    own `key_points`. `figures` are the unit `Comprehension.figures` on one of
+    the topic's `claimed` `(material_idx, page_idx)` pages.
+
+    Args:
+        topic_title: the topic's name — the synthetic section's title.
+        key_points: the topic's `ProposedTopic.key_points` — its own
+            teachable points (the source of truth for generation + validation).
+        comprehension: the `unit_segmentations.comprehension` payload — read
+            ONLY for its `figures` (the per-figure descriptions).
+        claimed: the `(material_idx, page_idx)` set of the topic's pages —
+            filters `comprehension.figures` to the topic's own slides.
+    """
+    claimed_set = set(claimed)
+    points = [str(k) for k in key_points if str(k).strip()]
+    sections = (
+        [SliceSection(title=topic_title, key_points=points)] if points else []
+    )
+    figures = [
+        SliceFigure(description=str(f.get("description", "")))
+        for f in (comprehension.get("figures") or [])
+        if isinstance(f, dict)
+        and (int(f.get("material_idx", -1)), int(f.get("page_idx", -1)))
+        in claimed_set
+    ]
+    return ComprehensionSlice(sections=sections, figures=figures)
+
+
 def slice_comprehension(
     comprehension: dict[str, Any],
     claimed: list[tuple[int, int]],
@@ -588,13 +639,12 @@ def slice_comprehension(
     the topic's pages. The slice keeps:
       * every `figure` on a claimed page (figure descriptions feed the lesson);
       * `sections` — the unit `Comprehension.sections` carry no page index, so
-        all of them are kept (they are the unit's teachable beats and the
-        prompt anchors on the topic title/summary to stay on-topic).
+        all of them are kept.
 
-    Underspecified-spec note: §6 says "that topic's slice of the comprehension
-    JSON" but the §2.2 `SectionRead` has no page mapping, so a section cannot
-    be filtered by page. Sections are therefore passed whole; figures, which
-    DO carry `(material_idx, page_idx)`, are filtered to the topic's pages.
+    NOTE (Bug B): this unit-wide-sections slicer is NO LONGER on the lesson
+    generation / validation path — those now use `topic_comprehension_slice`
+    over the topic's OWN `ProposedTopic.key_points`. It is retained for
+    `quiz.py`'s auto path (task 2.6), whose call site is unchanged.
     """
     claimed_set = set(claimed)
     sections = [
@@ -657,6 +707,10 @@ async def generate_topic(
          `content` into `topics.content` — the §4 invariant
          `topics.content == topic_versions[active_version_id].content`.
 
+    Args:
+        topic_id: the confirmed topic to generate.
+        gemini / scene_drawer: passed through to `generate_lesson`.
+
     Returns a `GenerateResult`. Requires a configured Supabase service-role
     client.
     """
@@ -670,10 +724,12 @@ async def generate_topic(
             "(SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY)",
         )
 
-    # 1. Load the topic.
+    # 1. Load the topic. `n` is the unit-scoped 1-based ordinal — proposed
+    #    topic[n-1] in the latest segmentation is THIS topic (confirm_breakdown
+    #    maps proposed-topic[i] -> the `topics` row with `n = i + 1`).
     topic_resp = (
         supabase.table("topics")
-        .select("id,name,summary,design_notes,unit_id")
+        .select("id,name,summary,design_notes,unit_id,n")
         .eq("id", topic_id)
         .single()
         .execute()
@@ -737,10 +793,11 @@ async def generate_topic(
         for r in page_rows
     ]
 
-    # 4. The unit's latest comprehension, sliced for this topic.
+    # 4. The unit's latest segmentation, sliced for this topic from the
+    #    topic's OWN `ProposedTopic.key_points` (Bug B).
     seg_resp = (
         supabase.table("unit_segmentations")
-        .select("id,comprehension,created_at")
+        .select("id,comprehension,proposed,created_at")
         .eq("unit_id", unit_id)
         .order("created_at", desc=True)
         .limit(1)
@@ -754,8 +811,24 @@ async def generate_topic(
             "comprehension for this topic",
         )
     comprehension = seg_rows[0].get("comprehension") or {}
+    # Locate THIS topic's `ProposedTopic` — confirm_breakdown maps
+    # proposed-topic[i] -> the `topics` row with `n = i + 1`, so the
+    # topic's own key points live at `proposed.topics[n - 1]`.
+    proposed = seg_rows[0].get("proposed") or {}
+    proposed_topics = list(proposed.get("topics") or [])
+    topic_n = int(topic.get("n") or 0)
+    key_points: list[str] = []
+    if 1 <= topic_n <= len(proposed_topics):
+        pt = proposed_topics[topic_n - 1]
+        if isinstance(pt, dict):
+            key_points = [str(k) for k in (pt.get("key_points") or [])]
     claimed = [(p.material_idx, p.page_idx) for p in topic_pages]
-    comprehension_slice = slice_comprehension(comprehension, claimed)
+    comprehension_slice = topic_comprehension_slice(
+        topic_title=str(topic.get("name") or ""),
+        key_points=key_points,
+        comprehension=comprehension,
+        claimed=claimed,
+    )
 
     # 5. Run the core.
     steps = await generate_lesson(
@@ -828,6 +901,7 @@ __all__ = [
     "Step",
     "generate_lesson",
     "slice_comprehension",
+    "topic_comprehension_slice",
     "generate_topic",
     "GenerateResult",
 ]

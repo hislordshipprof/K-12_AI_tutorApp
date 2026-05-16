@@ -50,20 +50,18 @@ _FLUIDS_TOPIC_SUMMARY = (
     "the net upward push from pressure differences, and Archimedes' "
     "principle relating it to the weight of displaced fluid."
 )
+# Bug B: a topic's slice is now ONE synthetic section (titled with the topic
+# name) carrying the topic's OWN `ProposedTopic.key_points` — what
+# `topic_comprehension_slice` builds. The hand-built slice mirrors that shape.
 _FLUIDS_SLICE = ComprehensionSlice(
     sections=[
         SliceSection(
-            title="The buoyant force",
+            title=_FLUIDS_TOPIC_TITLE,
             key_points=[
                 "A submerged object feels greater pressure on its bottom "
                 "than its top.",
                 "That pressure difference produces a net upward force — the "
                 "buoyant force.",
-            ],
-        ),
-        SliceSection(
-            title="Archimedes' principle",
-            key_points=[
                 "The buoyant force equals the weight of the fluid the object "
                 "displaces.",
                 "An object floats when the buoyant force balances its weight.",
