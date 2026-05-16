@@ -215,3 +215,48 @@ async def get_me(
         },
         "last_topic": last_topic,
     }
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_me(
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> None:
+    """Delete the **calling** user's account and all of their personal data.
+
+    Self-service account deletion — the §14 compliance "deletion path".
+    This endpoint can only ever delete the caller's own account: the target
+    user id is taken from the verified JWT (`sub`), never from the request
+    body or a path/query parameter, so there is no way to delete anyone else.
+
+    Removing the `auth.users` row cascades — every table that references the
+    user with `on delete cascade` (profiles, lesson_sessions, topic_progress,
+    quiz_attempts, notes, flashcards, …) is cleaned up by Postgres. The
+    profile row also goes via that cascade.
+
+    Returns 204 on success.
+    """
+    user_id = _user_uuid(user)
+    str_id = str(user_id)
+
+    supabase = get_supabase()
+    if supabase is None:
+        # No Supabase (local-dev placeholder) — there is no account store to
+        # delete from. Report it honestly rather than pretending success.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="account deletion unavailable",
+        )
+
+    try:
+        # Admin API delete of the auth.users row. `on delete cascade` FKs then
+        # purge profiles / sessions / progress / quiz attempts / notes / etc.
+        supabase.auth.admin.delete_user(str_id)
+    except Exception as e:  # noqa: BLE001
+        log.warning("account_delete_failed", error=str(e), user_id=str_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="account deletion failed",
+        ) from e
+
+    log.info("account_deleted", user_id=str_id)
+    return None
