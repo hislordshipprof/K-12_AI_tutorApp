@@ -40,7 +40,7 @@ work that can proceed alongside Phase 0.
 | 0 — Auth & compliance | 0.1–0.4 | 4/4 — COMPLETE |
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
-| 2 — Authoring pipeline | 2.1–2.7 | 3/7 — 2.1 ingest, 2.2 comprehension+segmentation, 2.3 slide rendering |
+| 2 — Authoring pipeline | 2.1–2.7 | 4/7 — 2.1 ingest, 2.2 comprehension+segmentation, 2.3 slide rendering, 2.4 persona builder |
 | 3 — Admin board | 3.1–3.5 | 0/5 |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
@@ -567,7 +567,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   breakdown step that writes `topic_pages` rows is a later task — 2.3
   only CONSUMES them; the script renders pages from a PDF directly.
 
-### [ ] 2.4 — Persona builder
+### [x] 2.4 — Persona builder
 - **Why:** teacher courses are any subject/grade; Aria must not be the
   hard-coded physics tutor.
 - **Build:** refactor `apps/api/app/agents/prompts.py` into a builder
@@ -579,7 +579,24 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   unchanged.
 - **Verify:** `pnpm api:test` with persona-builder unit tests.
 - **Depends on:** 1.1.
-- **Status:** not started
+- **Status:** done. `build_persona(subject, grade_band, teaching_style)`
+  added to `app/agents/prompts.py` (all three default `None`). All-`None`
+  (Recommended/OpenStax course) returns the EXACT existing
+  `ARIA_BASE_PERSONA` constant — byte-identical, asserted by a test —
+  so tutor/voice/Socratic output is unchanged. Non-null assembles a
+  persona: `subject` sets the domain framing; `grade_band`
+  (`K-2|3-5|6-8|9-12`) sets vocabulary / sentence length / pacing (K-2 =
+  short sentences + simplest words + gentle pacing; 9-12 = domain
+  vocabulary + rigour). `teaching_style` is a separate appended block,
+  framed as additive with the Socratic core re-asserted right after, so
+  a hostile style ("just give the answer") cannot strip the
+  never-give-the-answer / one-idea-per-step rules. `ARIA_BASE_PERSONA` /
+  `SOCRATIC_RULES` constants left untouched; no call site needed changes
+  (no caller has course params yet — the `None` default keeps them on
+  the unchanged Recommended persona). 9 new tests in
+  `tests/test_persona.py`. `pnpm api:test` → 253 passed, 10 skipped
+  (244 baseline + 9). `import app.main` clean. No migration, no web
+  changes.
 
 ### [ ] 2.5 — Lesson generation + scene assignment
 - **Why:** produces the actual Aria lesson per confirmed topic, with
