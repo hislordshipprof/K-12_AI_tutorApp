@@ -41,7 +41,7 @@ work that can proceed alongside Phase 0.
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
-| 3 — Admin board | 3.1–3.5 | 4/5 — 3.1 (/teach scaffold + role gate), 3.2 (class management + join approvals), 3.3 (course/unit management + material upload), 3.4 (segmentation job UI + confirm-breakdown) done |
+| 3 — Admin board | 3.1–3.5 | 5/5 — COMPLETE (scaffold + role gate · class management · course/unit + material upload · segmentation + confirm-breakdown · topic generate/review/version/publish) |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
 
@@ -992,7 +992,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   > re-confirmed idempotently (still 7 topics / 61 pages, not 14/122).
   > No migration. Next: 3.5.
 
-### [ ] 3.5 — Topic review/edit/preview + versions + publish
+### [x] 3.5 — Topic review/edit/preview + versions + publish
 - **Why:** teachers review generated lessons, edit, preview as a
   student, manage versions, and publish.
 - **Build:** the topic page — watch the generate job, review/edit steps,
@@ -1003,7 +1003,56 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   Fluids topic; publish is blocked on an unvalidated lesson.
 - **Verify:** `pnpm verify`; full review→publish loop.
 - **Depends on:** 3.4, 2.7.
-- **Status:** not started
+- **Status:** done (2026-05-16).
+  Migration `supabase/migrations/20260516120000_topic_versions_validation.sql`
+  — `topic_versions` gains a `validation jsonb` column (the §4 schema had
+  no field for it; the publish gate needs per-version validation because
+  the teacher can switch the live version). Applied to the cloud DB.
+  Web: new screen `app/teach/courses/[id]/topics/[topicId]/page.tsx` —
+  the single-scroll topic page: an editable design-notes card; a Lesson
+  section that drives off the generate job (idle "Generate lesson" →
+  rendering/generating/validating progress → done → failed); on done, a
+  validation banner (validated / gap report), an inline per-step editor,
+  "Preview as student" (→ the live `/classroom/{id}`) and "Re-generate";
+  a Versions list (Live badge, per-version validation, make-live /
+  delete); a sticky Publish bar, blocked until the active version
+  validated. The unit page gained a "Topics" section linking into each
+  topic page.
+  API: `app/api/v1/teacher.py` — `GET /v1/teacher/topics/{id}` (lesson +
+  versions + latest generate job), `PATCH .../topics/{id}` (design notes
+  / hand-edited content — mirrored into the active `topic_versions` row,
+  §6), `POST .../topics/{id}/generate` (a `generate` `pipeline_jobs` row
+  run via `BackgroundTasks`; one-in-flight-per-topic; rate-limited),
+  `POST .../versions/{vid}/activate`, `DELETE .../versions/{vid}` (400 on
+  the active one), `POST .../topics/{id}/publish` (the §6 gate — 400
+  unless the active version's `validation.passed` is true). The
+  `generate` job's `rendering` stage runs task-2.3 `render_topic`,
+  `generating` runs task-2.7 `generate_and_validate` and persists the
+  `{passed,covered,total,gaps}` result onto the produced
+  `topic_versions` row; `validating` is an unregistered no-op (validation
+  runs inside `generate_and_validate`). `get_unit_detail` now also
+  returns `topics`.
+  >
+  > DECISION: per-version validation is stored on the new
+  > `topic_versions.validation` column — §4's schema omitted it, but
+  > "publish blocked until validated" + "switches the live version"
+  > together require the gate to read the ACTIVE version's status, not a
+  > topic-wide or job-wide flag.
+  >
+  > **Verified.** `pnpm verify` → phase-1 17/17, phase-2 9/9, ALL CHECKS
+  > PASS. `pnpm api:test` → 399 passed, 10 skipped (378 baseline + 21 new
+  > tests in `test_topic_management.py`). `tsc` clean; `next build` ok.
+  > **Live end-to-end on the real cloud DB** for the Fluids topic "States
+  > of Matter & Fluids": publish-before-generation → 400 (gate blocked);
+  > the `generate` job rendered + generated + validated → v1, 10 steps,
+  > validated 3/3; a step `PATCH` persisted; **re-generate** → v2;
+  > **activate** switched the live version back to v1; **publish** → 200
+  > (DB-confirmed `status='published'`, 2 versions, active version
+  > validated). **Live in the browser**: the topic page rendered the
+  > PUBLISHED pill, the validation banner, 10 editable steps, the version
+  > list (v1 Live / v2), the "Published" bar and the "Preview as student"
+  > → `/classroom/{id}` link; the unit page's Topics section listed all
+  > 7 topics with the published one marked. Phase 3 COMPLETE.
 
 ---
 

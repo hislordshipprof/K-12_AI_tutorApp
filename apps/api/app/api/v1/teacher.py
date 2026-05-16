@@ -46,7 +46,9 @@ from app.core.supabase import get_supabase
 from app.pipeline.confirm import ConfirmError, confirm_breakdown
 from app.pipeline.ingest import IngestRejected, ingest_material, validate_upload
 from app.pipeline.jobs import run_job
+from app.pipeline.render import render_topic
 from app.pipeline.segment import ProposedTopic, segment_unit
+from app.pipeline.validate import generate_and_validate
 
 router = APIRouter(prefix="/teacher", tags=["teacher"])
 log = get_logger(__name__)
@@ -64,6 +66,49 @@ async def _comprehending_stage(job: dict[str, Any]) -> None:
 
 
 _SEGMENT_HANDLERS = {"comprehending": _comprehending_stage}
+
+
+# ── Generate-job stage handlers (teacher-authoring.md §6) ───────────────────
+# A `generate` job's stage sequence is `rendering` -> `generating` ->
+# `validating` (`jobs.STAGE_SEQUENCES`). `rendering` rasterises the topic's
+# claimed slides; `generating` writes the lesson AND validates it (validation
+# runs INSIDE `generate_and_validate`). `validating` therefore stays
+# UNREGISTERED — it is a runner no-op.
+async def _rendering_stage(job: dict[str, Any]) -> None:
+    """Stage handler — render the topic's claimed slide/figure pages."""
+    await render_topic(str(job["topic_id"]))
+
+
+async def _generating_stage(job: dict[str, Any]) -> None:
+    """Stage handler — generate + validate the topic's lesson, then persist
+    the per-version validation result onto the `topic_versions` row the run
+    produced so the publish gate + the topic page can read it (§6)."""
+    result = await generate_and_validate(str(job["topic_id"]))
+    r = result.report
+    get_supabase().table("topic_versions").update(
+        {
+            "validation": {
+                "passed": r.passed,
+                "covered": r.covered,
+                "total": r.total,
+                "gaps": [
+                    {
+                        "section": g.section,
+                        "key_point": g.key_point,
+                        "verdict": g.verdict,
+                        "detail": g.detail,
+                    }
+                    for g in r.gaps
+                ],
+            }
+        }
+    ).eq("id", result.generate.version_id).execute()
+
+
+_GENERATE_HANDLERS = {
+    "rendering": _rendering_stage,
+    "generating": _generating_stage,
+}
 
 # Unambiguous join-code alphabet — no O/0/I/1 so a code is easy to read
 # aloud and type (`teacher-authoring.md` §9).
@@ -227,6 +272,44 @@ def _load_owned_unit(
     return unit, course
 
 
+def _load_owned_topic(
+    supabase: Any, topic_id: str, caller_id: str
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Load a `topics` row + its `units` row + its owning `courses` row (`§4`).
+
+    A missing topic -> 404. The topic's unit, then its course, are loaded the
+    same way `_load_owned_unit` does — `_load_owned_course` enforces caller
+    ownership, so a topic under a non-owned (or missing) course also 404s.
+    Returns `(topic, unit, course)`.
+    """
+    try:
+        resp = (
+            supabase.table("topics")
+            .select(
+                "id,unit_id,n,name,summary,content,status,design_notes,"
+                "active_version_id"
+            )
+            .eq("id", topic_id)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning("topic_lookup_failed", error=str(e), topic_id=topic_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="topic lookup failed",
+        ) from e
+
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="topic not found"
+        )
+    topic = rows[0]
+    unit, course = _load_owned_unit(supabase, str(topic.get("unit_id")), caller_id)
+    return topic, unit, course
+
+
 # Slug alphabet for the random suffix — lowercase letters + digits.
 _SLUG_ALPHABET = string.ascii_lowercase + string.digits
 _SLUG_MAX_TRIES = 12
@@ -329,6 +412,18 @@ class ConfirmTopicsRequest(BaseModel):
     """
 
     topics: list[ProposedTopic]
+
+
+class TopicUpdate(BaseModel):
+    """Request body for `PATCH /v1/teacher/topics/{topic_id}`.
+
+    Both fields are optional — `None` means "leave unchanged". `design_notes`
+    is the per-lesson teacher guidance; `content` is a hand-edited lesson, a
+    list of `{tts, html, dur, scene, page?}` step dicts (§6).
+    """
+
+    design_notes: str | None = None
+    content: list[dict[str, Any]] | None = None
 
 
 def _course_owner_for_job(supabase: Any, job: dict[str, Any]) -> str | None:
@@ -1105,14 +1200,16 @@ async def get_unit_detail(
     unit_id: UUID,
     user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
 ) -> dict[str, Any]:
-    """Return a unit's lesson materials + its latest segment job (`§6`/`§9`).
+    """Return a unit's lesson materials, topics + its latest segment job (`§6`/`§9`).
 
     Teacher/admin-gated; the unit's course must be owned by the caller (or
     caller is admin) else 404. Materials are ordered by `uploaded_at`;
-    `status` is the row's `conversion_status`. `segment_job` is the unit's
-    most recent `pipeline_jobs` row with `kind='segment'` (shaped
-    `{id,status,stage}`) so the unit screen can show / poll segmentation
-    progress — `null` when the unit has never been segmented.
+    `status` is the row's `conversion_status`. `topics` is the unit's
+    `topics` rows ordered by `n`, each shaped `{id,n,name,status}`.
+    `segment_job` is the unit's most recent `pipeline_jobs` row with
+    `kind='segment'` (shaped `{id,status,stage}`) so the unit screen can show
+    / poll segmentation progress — `null` when the unit has never been
+    segmented.
     """
     supabase = get_supabase()
     if supabase is None:
@@ -1132,6 +1229,15 @@ async def get_unit_detail(
             .execute()
         )
         materials = getattr(m_resp, "data", None) or []
+
+        t_resp = (
+            supabase.table("topics")
+            .select("id,n,name,status")
+            .eq("unit_id", str(unit_id))
+            .order("n")
+            .execute()
+        )
+        topics = getattr(t_resp, "data", None) or []
 
         j_resp = (
             supabase.table("pipeline_jobs")
@@ -1173,6 +1279,15 @@ async def get_unit_detail(
                 "status": m.get("conversion_status"),
             }
             for m in materials
+        ],
+        "topics": [
+            {
+                "id": str(t["id"]),
+                "n": t.get("n"),
+                "name": t.get("name"),
+                "status": t.get("status"),
+            }
+            for t in topics
         ],
         "segment_job": segment_job,
     }
@@ -1521,3 +1636,438 @@ async def confirm_unit_topics(
         "updated": result.updated,
         "page_count": result.page_count,
     }
+
+
+# ─── topic / lesson authoring (`/teach/.../topics/[id]`, `teacher-authoring.md`
+# §4/§6/§10) ─────────────────────────────────────────────────────────────────
+@router.get("/topics/{topic_id}")
+async def get_topic_detail(
+    topic_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Return a topic's lesson, versions + its latest generate job (`§6`/`§10`).
+
+    Teacher/admin-gated; the topic's course must be owned by the caller (or
+    caller is admin) else 404. `versions` is the topic's `topic_versions`
+    rows newest-first, each carrying its per-version `validation` result and
+    an `active` flag (the row whose id is `topics.active_version_id`).
+    `generate_job` is the topic's most recent `kind='generate'`
+    `pipeline_jobs` row (shaped `{id,status,stage}`) so the topic screen can
+    show / poll generation progress — `null` when never generated.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="topic not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    topic, unit, course = _load_owned_topic(supabase, str(topic_id), caller_id)
+
+    try:
+        v_resp = (
+            supabase.table("topic_versions")
+            .select("id,label,validation,created_at")
+            .eq("topic_id", str(topic_id))
+            .order("created_at", desc=True)
+            .execute()
+        )
+        versions = getattr(v_resp, "data", None) or []
+
+        j_resp = (
+            supabase.table("pipeline_jobs")
+            .select("id,status,stage")
+            .eq("topic_id", str(topic_id))
+            .eq("kind", "generate")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        job_rows = getattr(j_resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning("topic_detail_failed", error=str(e), topic_id=str(topic_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="topic detail lookup failed",
+        ) from e
+
+    active_version_id = topic.get("active_version_id")
+    generate_job = (
+        {
+            "id": str(job_rows[0]["id"]),
+            "status": job_rows[0].get("status"),
+            "stage": job_rows[0].get("stage"),
+        }
+        if job_rows
+        else None
+    )
+
+    return {
+        "id": str(topic["id"]),
+        "name": topic.get("name"),
+        "status": topic.get("status"),
+        "design_notes": topic.get("design_notes"),
+        "content": topic.get("content") or [],
+        "active_version_id": active_version_id,
+        "course_id": str(course["id"]),
+        "unit_id": str(unit["id"]),
+        "unit_name": unit.get("name"),
+        "generate_job": generate_job,
+        "versions": [
+            {
+                "id": str(v["id"]),
+                "label": v.get("label"),
+                "created_at": v.get("created_at"),
+                "active": str(v["id"]) == str(active_version_id)
+                if active_version_id
+                else False,
+                "validation": v.get("validation"),
+            }
+            for v in versions
+        ],
+    }
+
+
+@router.patch("/topics/{topic_id}")
+async def update_topic(
+    topic_id: UUID,
+    body: TopicUpdate,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Update a topic's `design_notes` and / or hand-edited `content` (`§6`).
+
+    Teacher/admin-gated; the topic's course must be owned by the caller (or
+    caller is admin) else 404. A `None` field is left unchanged. A `content`
+    edit also mirrors into the ACTIVE `topic_versions` row's `content` when
+    the topic has one — a hand-edit mutates the active version in place (the
+    §4 invariant `topics.content == active version's content`).
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="topic not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    topic, _unit, _course = _load_owned_topic(supabase, str(topic_id), caller_id)
+
+    try:
+        if body.design_notes is not None:
+            (
+                supabase.table("topics")
+                .update({"design_notes": body.design_notes})
+                .eq("id", str(topic_id))
+                .execute()
+            )
+        if body.content is not None:
+            (
+                supabase.table("topics")
+                .update({"content": body.content})
+                .eq("id", str(topic_id))
+                .execute()
+            )
+            active_version_id = topic.get("active_version_id")
+            if active_version_id:
+                (
+                    supabase.table("topic_versions")
+                    .update({"content": body.content})
+                    .eq("id", str(active_version_id))
+                    .execute()
+                )
+    except Exception as e:  # noqa: BLE001
+        log.warning("topic_update_failed", error=str(e), topic_id=str(topic_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="topic update failed",
+        ) from e
+
+    return {"ok": True}
+
+
+@router.post("/topics/{topic_id}/generate", status_code=status.HTTP_202_ACCEPTED)
+async def generate_topic_endpoint(
+    topic_id: UUID,
+    background: BackgroundTasks,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Enqueue a `generate` pipeline job for a topic (`§6`/`§10`).
+
+    Teacher/admin-gated; the topic's course must be owned by the caller (or
+    caller is admin) else 404. At most one generate job runs per topic at a
+    time: if a `queued` or `running` generate job already exists it is
+    returned as-is, without starting another (§13). Otherwise a
+    `pipeline_jobs` row is inserted and `run_job` walks it (render -> generate
+    + validate) in the background. Returns `{job_id, status}` with HTTP 202.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="topic not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_topic(supabase, str(topic_id), caller_id)
+
+    try:
+        # §13 — at most one in-flight generate job per topic. Return any
+        # existing queued/running job instead of starting a second.
+        inflight_resp = (
+            supabase.table("pipeline_jobs")
+            .select("id,status,stage,kind")
+            .eq("topic_id", str(topic_id))
+            .eq("kind", "generate")
+            .in_("status", ["queued", "running"])
+            .execute()
+        )
+        inflight = getattr(inflight_resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "generate_job_lookup_failed", error=str(e), topic_id=str(topic_id)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="generate job lookup failed",
+        ) from e
+
+    if inflight:
+        existing = inflight[0]
+        return {"job_id": str(existing["id"]), "status": existing.get("status")}
+
+    try:
+        await ingest_acquire(caller_id)
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
+
+    job_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        supabase.table("pipeline_jobs").insert(
+            {
+                "id": job_id,
+                "kind": "generate",
+                "topic_id": str(topic_id),
+                "status": "queued",
+                "stage": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+        ).execute()
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "generate_job_insert_failed", error=str(e), topic_id=str(topic_id)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="generate job create failed",
+        ) from e
+
+    background.add_task(run_job, job_id, handlers=_GENERATE_HANDLERS)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@router.post("/topics/{topic_id}/versions/{version_id}/activate")
+async def activate_topic_version(
+    topic_id: UUID,
+    version_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Make a `topic_versions` row the topic's active version (`§4`/`§6`).
+
+    Teacher/admin-gated; the topic's course must be owned by the caller (or
+    caller is admin) else 404. The version must exist AND belong to this
+    topic (else 404). Sets `topics.active_version_id` and mirrors that
+    version's `content` into `topics.content` — the §4 invariant.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="topic not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_topic(supabase, str(topic_id), caller_id)
+
+    try:
+        v_resp = (
+            supabase.table("topic_versions")
+            .select("id,topic_id,content")
+            .eq("id", str(version_id))
+            .limit(1)
+            .execute()
+        )
+        v_rows = getattr(v_resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "topic_version_lookup_failed", error=str(e), version_id=str(version_id)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="topic version lookup failed",
+        ) from e
+
+    if not v_rows or str(v_rows[0].get("topic_id")) != str(topic_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="version not found"
+        )
+    version = v_rows[0]
+
+    try:
+        (
+            supabase.table("topics")
+            .update(
+                {
+                    "active_version_id": str(version_id),
+                    "content": version.get("content") or [],
+                }
+            )
+            .eq("id", str(topic_id))
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "topic_version_activate_failed", error=str(e), topic_id=str(topic_id)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="version activate failed",
+        ) from e
+
+    return {"ok": True}
+
+
+@router.delete(
+    "/topics/{topic_id}/versions/{version_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_topic_version(
+    topic_id: UUID,
+    version_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> None:
+    """Delete a non-active `topic_versions` row (`§6`).
+
+    Teacher/admin-gated; the topic's course must be owned by the caller (or
+    caller is admin) else 404. The ACTIVE version cannot be deleted (400 — it
+    is the live lesson). The version must belong to this topic (else 404).
+    Returns HTTP 204.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="topic not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    topic, _unit, _course = _load_owned_topic(supabase, str(topic_id), caller_id)
+
+    if str(topic.get("active_version_id") or "") == str(version_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cannot delete the active version",
+        )
+
+    try:
+        v_resp = (
+            supabase.table("topic_versions")
+            .select("id,topic_id")
+            .eq("id", str(version_id))
+            .limit(1)
+            .execute()
+        )
+        v_rows = getattr(v_resp, "data", None) or []
+        if not v_rows or str(v_rows[0].get("topic_id")) != str(topic_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="version not found",
+            )
+        (
+            supabase.table("topic_versions")
+            .delete()
+            .eq("id", str(version_id))
+            .execute()
+        )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "topic_version_delete_failed", error=str(e), version_id=str(version_id)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="version delete failed",
+        ) from e
+    return None
+
+
+@router.post("/topics/{topic_id}/publish")
+async def publish_topic(
+    topic_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Publish a topic — the §6 publish gate (`teacher-authoring.md` §6).
+
+    Teacher/admin-gated; the topic's course must be owned by the caller (or
+    caller is admin) else 404. Publish is BLOCKED until the topic's active
+    version has validated: the topic must have an `active_version_id` (else
+    400) and that version's `validation` must be a dict with `passed is True`
+    (else 400). When the gate passes, `topics.status` is set to `published`.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="topic not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    topic, _unit, _course = _load_owned_topic(supabase, str(topic_id), caller_id)
+
+    active_version_id = topic.get("active_version_id")
+    if not active_version_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="generate a lesson first",
+        )
+
+    try:
+        v_resp = (
+            supabase.table("topic_versions")
+            .select("id,validation")
+            .eq("id", str(active_version_id))
+            .limit(1)
+            .execute()
+        )
+        v_rows = getattr(v_resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "publish_version_lookup_failed", error=str(e), topic_id=str(topic_id)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="topic version lookup failed",
+        ) from e
+
+    validation = v_rows[0].get("validation") if v_rows else None
+    if not (isinstance(validation, dict) and validation.get("passed") is True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="lesson has not validated — re-generate to fix the gaps",
+        )
+
+    try:
+        (
+            supabase.table("topics")
+            .update({"status": "published"})
+            .eq("id", str(topic_id))
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("topic_publish_failed", error=str(e), topic_id=str(topic_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="topic publish failed",
+        ) from e
+
+    return {"id": str(topic_id), "status": "published"}

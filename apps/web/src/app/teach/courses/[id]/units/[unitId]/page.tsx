@@ -32,6 +32,13 @@ interface SegmentJob {
   stage: string | null;
 }
 
+interface TopicLite {
+  id: string;
+  n: number;
+  name: string;
+  status: 'draft' | 'published';
+}
+
 interface UnitDetail {
   id: string;
   name: string;
@@ -39,6 +46,7 @@ interface UnitDetail {
   course_title: string;
   materials: Material[];
   segment_job: SegmentJob | null;
+  topics: TopicLite[];
 }
 
 interface StagedFile {
@@ -301,6 +309,43 @@ export default function UnitDetailPage() {
             segmentJob={data.segment_job}
           />
         </section>
+
+        {/* TOPICS */}
+        {(data.topics ?? []).length > 0 && (
+          <section>
+            <SectHd
+              title="Topics"
+              sub={`${(data.topics ?? []).length} ${(data.topics ?? []).length === 1 ? 'topic' : 'topics'} — generate and publish each one's lesson.`}
+            />
+            <div className="overflow-hidden rounded-[20px] border border-border bg-white shadow-sm">
+              {(data.topics ?? []).map((t) => (
+                <Link
+                  key={t.id}
+                  href={`/teach/courses/${data.course_id}/topics/${t.id}`}
+                  className="flex items-center gap-4 border-b border-border px-5 py-4 transition-colors last:border-b-0 hover:bg-paper-2"
+                >
+                  <div className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl bg-indigo-soft font-display text-sm font-bold text-indigo">
+                    {t.n}
+                  </div>
+                  <div className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
+                    {t.name}
+                  </div>
+                  <span
+                    className={cn(
+                      'rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em]',
+                      t.status === 'published'
+                        ? 'bg-mint-soft text-[#1C7A47]'
+                        : 'bg-paper-2 text-ink-3',
+                    )}
+                  >
+                    {t.status}
+                  </span>
+                  <Icon name="chev" size={16} className="text-ink-3" />
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );
