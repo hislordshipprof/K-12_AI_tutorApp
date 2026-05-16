@@ -63,67 +63,17 @@ interface LessonStep {
   scene?: { type: string; params: Record<string, unknown> } | null;
 }
 
+// Placeholder shown when a real topic has no generated `content` yet (the
+// content pipeline fills `topics.content` asynchronously). It is NOT lesson
+// content — just a holding step so the classroom renders instead of going
+// blank. The old hardcoded `wave-properties-anatomy` prototype lesson was
+// removed: real topics carry their own `content` from the DB.
 const LESSON_STEPS: LessonStep[] = [
   { jsx: 'Preparing your lesson…', tts: 'Preparing your lesson.', dur: '00:00' },
   {
-    jsx: (
-      <>
-        Every wave starts at a <span className="hl-y">rest position</span> — the line everything
-        wobbles around.
-      </>
-    ),
-    tts: 'Every wave starts at a rest position — the line everything wobbles around.',
-    dur: '01:20',
-  },
-  {
-    jsx: (
-      <>
-        Now I&apos;ll draw the wave. Watch how it oscillates <span className="hl-b">above</span> and{' '}
-        <span className="hl-p">below</span> equilibrium.
-      </>
-    ),
-    tts: "Now I'll draw the wave. Watch how it oscillates above and below equilibrium.",
-    dur: '02:15',
-  },
-  {
-    jsx: (
-      <>
-        The high points are <span className="hl-y">crests</span> and the low points are{' '}
-        <span className="hl-p">troughs</span>.
-      </>
-    ),
-    tts: 'The high points are crests, and the low points are troughs.',
-    dur: '03:40',
-  },
-  {
-    jsx: (
-      <>
-        The <span className="hl-p">amplitude</span> is how far the wave goes from rest — it&apos;s
-        the wave&apos;s <em>energy</em>.
-      </>
-    ),
-    tts: "The amplitude is how far the wave goes from rest. It's the wave's energy.",
-    dur: '05:10',
-  },
-  {
-    html: 'One full cycle, crest to crest, is the <span class="hl-g">wavelength</span> — that lowercase $\\lambda$.',
-    tts: 'One full cycle, crest to crest, is the wavelength. That lowercase lambda.',
-    dur: '07:30',
-  },
-  {
-    jsx: (
-      <>
-        How often a wave repeats is <span className="hl-y">frequency</span>. Its inverse is the{' '}
-        <span className="hl-y">period</span>.
-      </>
-    ),
-    tts: 'How often a wave repeats is frequency. Its inverse is the period.',
-    dur: '09:50',
-  },
-  {
-    html: 'Put it together: <span class="hl-y">$v = f \\cdot \\lambda$</span>. Speed equals frequency times wavelength. That\'s the whole game.',
-    tts: "Put it together: v equals f times lambda. Speed equals frequency times wavelength. That's the whole game.",
-    dur: '12:40',
+    jsx: 'Aria is getting this lesson ready — hang tight.',
+    tts: 'Aria is getting this lesson ready. Hang tight.',
+    dur: '00:00',
   },
 ];
 
@@ -132,16 +82,9 @@ const LESSON_STEPS: LessonStep[] = [
 // fire a completion event, don't let a step hang forever.
 const LESSON_SAFETY_ADVANCE_MS = 90_000;
 
-const STEP_TITLES = [
-  '',
-  'Equilibrium',
-  'Drawing the wave',
-  'Crests & troughs',
-  'Amplitude',
-  'Wavelength (λ)',
-  'Frequency & period',
-  'The wave equation',
-];
+// Outline titles for the placeholder steps above. Real topics derive their
+// outline from `topics.content` (see `stepTitles` below).
+const STEP_TITLES = ['', 'Preparing'];
 
 export interface ClassroomTopic {
   slug: string;
@@ -180,7 +123,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
   const { sessionId } = useSession(topic.slug);
 
   // Prefer the real lesson content from `topics.content` when present;
-  // fall back to the hardcoded wave-properties demo otherwise. The shape
+  // fall back to the generic "preparing" placeholder otherwise. The shape
   // is identical so downstream playback/MathContent code is unchanged.
   const lessonSteps: LessonStep[] = useMemo(() => {
     if (topic.content && topic.content.length > 0) {
@@ -193,22 +136,17 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
     }
     return LESSON_STEPS;
   }, [topic.content]);
-  // The hand-drawn wave SVG is only meaningful for the wave-properties
-  // prototype demo + the closely-related Oscillations topic. Everything
-  // else gets a generic chalkboard that surfaces the current step's
-  // highlighted phrase, so a Kinematics lesson doesn't render a sine
-  // wave on the board.
+  // The hand-drawn wave SVG is only meaningful for wave / oscillation
+  // topics. Everything else gets a generic chalkboard that surfaces the
+  // current step's highlighted phrase, so a Kinematics lesson doesn't
+  // render a sine wave on the board.
   const whiteboardKind: 'waves' | 'generic' = useMemo(() => {
     const t = topic.title.toLowerCase();
-    if (
-      topic.slug === 'wave-properties-anatomy' ||
-      t.includes('wave') ||
-      t.includes('oscillation')
-    ) {
+    if (t.includes('wave') || t.includes('oscillation')) {
       return 'waves';
     }
     return 'generic';
-  }, [topic.slug, topic.title]);
+  }, [topic.title]);
 
   const stepTitles: string[] = useMemo(() => {
     if (topic.content && topic.content.length > 0) {
@@ -227,7 +165,12 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
     return STEP_TITLES;
   }, [topic.content]);
 
-  const [step, setStep] = useState(2);
+  // Start on the first real lesson step (index 0 is the intro/placeholder).
+  // Clamp so a short lesson — e.g. the 2-step "preparing" placeholder —
+  // never starts out of bounds.
+  const [step, setStep] = useState(() =>
+    Math.min(1, Math.max(0, lessonSteps.length - 1)),
+  );
   const [playing, setPlaying] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [qaOpen, setQaOpen] = useState(false);

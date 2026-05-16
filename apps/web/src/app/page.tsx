@@ -6,19 +6,53 @@ import { FloatingChip } from '@/components/marketing/floating-chip';
 import { LiveBoard } from '@/components/marketing/live-board';
 
 /**
+ * Resolve the "watch a lesson" demo link to a real seeded topic UUID.
+ *
+ * The marketing CTAs used to point at the `wave-properties-anatomy`
+ * prototype slug, which has no `topics` row — opening it failed the
+ * session FK. We resolve the first real AP Physics 1 topic server-side so
+ * the demo always lands on a real DB topic.
+ */
+async function resolveDemoClassroomHref(): Promise<string | null> {
+  const apiBase =
+    process.env.NEXT_PUBLIC_API_BASE ?? process.env.API_BASE_URL ?? '';
+  if (!apiBase) return null;
+  try {
+    const res = await fetch(`${apiBase}/v1/courses/ap-physics-1/units`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const units = (await res.json()) as {
+      topics: { id: string }[];
+    }[];
+    for (const unit of units) {
+      const topic = unit.topics?.[0];
+      if (topic?.id) return `/classroom/${topic.id}`;
+    }
+  } catch {
+    // Network blip — fall through to null.
+  }
+  return null;
+}
+
+/**
  * Landing screen — ported from prototype `LandingScreen` in
  * `screens-marketing.jsx`. Server-rendered: the only "interactive"
  * pieces are the TopNav (a client island) and the framer-motion-less
  * floating chips/board which use plain CSS animations from Tailwind.
  */
-export default function HomePage() {
+export default async function HomePage() {
+  // Demo CTAs route to a real seeded topic; when the curriculum can't be
+  // reached we send the visitor to onboarding rather than a dead lesson.
+  const demoHref = (await resolveDemoClassroomHref()) ?? '/onboarding';
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-paper">
       <TopNav
         streak={0}
         right={
           <Link
-            href="/classroom/wave-properties-anatomy"
+            href={demoHref}
             className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border-[1.5px] border-border-2 bg-transparent px-3.5 py-2 text-[13px] font-semibold text-ink transition-colors hover:border-ink-3 hover:bg-ink/[0.04]"
           >
             Watch demo
@@ -89,7 +123,7 @@ export default function HomePage() {
                 Start free <Icon name="arrow" size={18} />
               </Link>
               <Link
-                href="/classroom/wave-properties-anatomy"
+                href={demoHref}
                 className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-2xl border-[1.5px] border-border-2 bg-transparent px-7 py-4 text-base font-semibold text-ink transition-all duration-200 hover:border-ink-3 hover:bg-ink/[0.04] active:scale-[0.97]"
               >
                 Watch a 90-sec lesson

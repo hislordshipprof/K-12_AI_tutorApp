@@ -341,6 +341,34 @@ def test_bad_audio_b64_emits_error_frame(
         assert "b64" in msg["message"].lower() or "base64" in msg["message"].lower()
 
 
+# ── session-ownership guard (bug B — dev-user shortcut) ──────────────────────
+@pytest.mark.asyncio
+async def test_assert_session_owner_ws_skips_non_uuid_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The DEV_MODE `dev-user` shortcut is not a UUID; filtering Postgres'
+    `uuid` user_id column by it raises 22P02. `assert_session_owner_ws`
+    must skip the check (return True) for a non-UUID id rather than touching
+    the DB and erroring the dev voice connection into a 4403.
+    """
+    import uuid as _uuid
+
+    from app.core import session_auth
+
+    class _ExplodingSupabase:
+        """Any query attempt is a test failure — the guard must skip first."""
+
+        def table(self, *_a: Any, **_kw: Any) -> Any:  # noqa: ANN401
+            raise AssertionError("ownership query ran for a non-UUID user_id")
+
+    monkeypatch.setattr(session_auth, "supabase_enabled", lambda: True)
+    monkeypatch.setattr(session_auth, "get_supabase", lambda: _ExplodingSupabase())
+
+    session_id = _uuid.uuid4()
+    # Non-UUID id (the dev-user shortcut) — must short-circuit to True.
+    assert await session_auth.assert_session_owner_ws(session_id, "dev-user") is True
+
+
 # ── unit checks on the agent module ──────────────────────────────────────────
 def test_aria_voice_system_prompt_mentions_tutor() -> None:
     """Cheap smoke check on the agent's persona prompt — the brand name

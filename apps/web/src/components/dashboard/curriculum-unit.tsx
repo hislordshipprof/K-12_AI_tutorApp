@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 
 import { Icon } from '@/components/aria/icon';
+import { resolveClassroomTopicPath } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 export interface Topic {
@@ -86,21 +87,27 @@ export function CurriculumUnit({ unit, open, onToggle }: CurriculumUnitProps) {
       {open && unit.topics && (
         <div className="px-[22px] pb-3.5 pl-[66px] pt-1">
           {unit.topics.map((t, i) => {
-            // Route by real topic UUID when we have one; fall back to the
-            // legacy demo slug otherwise so the proto fixture still works.
-            const target = t.id
-              ? `/classroom/${t.id}`
-              : '/classroom/wave-properties-anatomy';
+            // Route by real topic UUID. A topic without an id is a legacy
+            // row — resolve the first real curriculum topic rather than the
+            // old prototype slug, which has no `topics` row.
+            const goTopic = async () => {
+              if (t.id) {
+                router.push(`/classroom/${t.id}`);
+                return;
+              }
+              const resolved = await resolveClassroomTopicPath();
+              if (resolved) router.push(resolved);
+            };
             return (
               <TopicRow
                 key={t.id ?? i}
                 topic={t}
                 onClick={() => {
-                  if (t.state === 'current') router.push(target);
+                  if (t.state === 'current') void goTopic();
                 }}
                 onAction={(e) => {
                   e.stopPropagation();
-                  router.push(target);
+                  void goTopic();
                 }}
               />
             );

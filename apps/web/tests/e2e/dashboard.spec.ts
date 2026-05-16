@@ -27,11 +27,14 @@ test.describe('Dashboard', () => {
     ).toBeVisible();
   });
 
-  test('"Resume lesson" navigates to the wave-properties classroom', async ({ page }) => {
+  test('"Resume lesson" navigates to a real curriculum topic', async ({ page }) => {
+    // Pre-first-session, the resume card resolves the first real topic of
+    // the loaded curriculum (mock units → topic id `t1`) rather than the
+    // retired `wave-properties-anatomy` prototype slug.
     await clickAndNavigate(
       page,
       page.getByRole('button', { name: /Pick up where you left off/i }),
-      /\/classroom\/wave-properties-anatomy$/,
+      /\/classroom\/t1$/,
     );
   });
 

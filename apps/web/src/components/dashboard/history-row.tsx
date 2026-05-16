@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 
+import { resolveClassroomTopicPath } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 export interface HistoryRowData {
@@ -26,10 +27,17 @@ export interface HistoryRowProps {
  */
 export function HistoryRow({ row }: HistoryRowProps) {
   const router = useRouter();
-  const target = row.topicId
-    ? `/classroom/${row.topicId}`
-    : '/classroom/wave-properties-anatomy';
-  const goto = () => router.push(target);
+  // Replay routes to the row's real topic UUID. When a legacy row carries
+  // no `topicId` we resolve the first real curriculum topic rather than the
+  // old prototype slug (which has no `topics` row → session FK failure).
+  const goto = async () => {
+    if (row.topicId) {
+      router.push(`/classroom/${row.topicId}`);
+      return;
+    }
+    const resolved = await resolveClassroomTopicPath();
+    if (resolved) router.push(resolved);
+  };
   const hasScore = typeof row.score === 'number';
   const isLow = hasScore && row.score! < 75;
 
@@ -92,7 +100,7 @@ export function HistoryRow({ row }: HistoryRowProps) {
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          router.push(target);
+          void goto();
         }}
         className="rounded-[9px] bg-ink px-3.5 py-[7px] text-xs font-semibold text-white"
       >

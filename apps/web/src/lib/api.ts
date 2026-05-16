@@ -114,3 +114,32 @@ export async function api<T = unknown>(path: string, options: ApiOptions = {}): 
 }
 
 export const apiBase = API_BASE;
+
+/**
+ * Resolve a real classroom topic to link to when the caller has no
+ * specific topic in hand (the dashboard "Resume lesson" fallback, the
+ * marketing "Watch demo" links, the rail's Classroom entry).
+ *
+ * Previously these all pointed at the `wave-properties-anatomy` prototype
+ * slug, which has no row in `topics` — `POST /v1/sessions` then failed the
+ * `lesson_sessions_topic_id_fkey` FK. We instead resolve the first real
+ * seeded topic from the AP Physics 1 curriculum so every classroom session
+ * is created against a real DB topic UUID.
+ *
+ * Returns `/classroom/{topicUuid}` on success, or `null` when the
+ * curriculum can't be reached (caller decides the fallback).
+ */
+export async function resolveClassroomTopicPath(): Promise<string | null> {
+  try {
+    const units = await api<
+      { id: string; topics: { id: string }[] }[]
+    >('/v1/courses/ap-physics-1/units');
+    for (const unit of units) {
+      const topic = unit.topics?.[0];
+      if (topic?.id) return `/classroom/${topic.id}`;
+    }
+  } catch {
+    // Curriculum unavailable — let the caller fall back.
+  }
+  return null;
+}

@@ -86,6 +86,15 @@ async def require_session_owner(
     return rows[0]
 
 
+def _is_uuid(value: str) -> bool:
+    """True when `value` parses as a UUID."""
+    try:
+        UUID(str(value))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 async def assert_session_owner_ws(
     session_id: UUID,
     user_id: str,
@@ -99,6 +108,14 @@ async def assert_session_owner_ws(
         return True
     supabase = get_supabase()
     if supabase is None:
+        return True
+    # The DEV_MODE shortcut accepts a connection as the synthetic
+    # `dev-user`, which is not a UUID. Filtering Postgres' `uuid`
+    # `user_id` column by a non-UUID string raises `22P02`; skip the
+    # ownership check for non-UUID ids so the dev path closes cleanly
+    # instead of erroring into a 4403.
+    if not _is_uuid(user_id):
+        log.info("session_owner_ws_skip_non_uuid", user_id=user_id)
         return True
     try:
         resp = (

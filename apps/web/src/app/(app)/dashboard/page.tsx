@@ -10,7 +10,7 @@ import { CurriculumUnit } from '@/components/dashboard/curriculum-unit';
 import { StreakCard } from '@/components/dashboard/streak-card';
 import { TodayRow } from '@/components/dashboard/today-row';
 import { displayName, useMe } from '@/hooks/use-me';
-import { api } from '@/lib/api';
+import { api, resolveClassroomTopicPath } from '@/lib/api';
 
 // Shape returned by GET /v1/courses (Supabase row passthrough).
 interface CourseRow {
@@ -157,15 +157,23 @@ export default function DashboardPage() {
   const todayBlocks = (planner?.blocks ?? []).filter((b) => b.date === today);
 
   // "Pick up where you left off" — routes to the user's most-recent topic
-  // when we have one, falls back to the prototype slug otherwise so the
-  // demo path still works pre-first-session.
+  // when we have one. Pre-first-session we resolve the first real topic of
+  // the curriculum (its UUID) rather than the old prototype slug, which has
+  // no `topics` row and would fail the session FK.
   const resumeTopic = me?.last_topic ?? null;
-  const goClassroom = () => {
+  const goClassroom = async () => {
     if (resumeTopic?.id) {
       router.push(`/classroom/${resumeTopic.id}`);
-    } else {
-      router.push('/classroom/wave-properties-anatomy');
+      return;
     }
+    // Prefer the first topic of the active course's loaded curriculum.
+    const firstTopicId = units.find((u) => u.topics.length > 0)?.topics[0]?.id;
+    if (firstTopicId) {
+      router.push(`/classroom/${firstTopicId}`);
+      return;
+    }
+    const resolved = await resolveClassroomTopicPath();
+    if (resolved) router.push(resolved);
   };
 
   return (

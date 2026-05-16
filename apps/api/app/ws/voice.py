@@ -68,7 +68,7 @@ async def voice_ws(
             log.info(
                 "voice_ws_dev_accept",
                 session_id=session_id,
-                note="DEV_MODE=true → accepting connection without token",
+                note="DEV_MODE=true -> accepting connection without token",
             )
         else:
             log.warning("voice_ws_missing_token", session_id=session_id)
