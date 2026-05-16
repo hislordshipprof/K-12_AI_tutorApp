@@ -40,7 +40,7 @@ work that can proceed alongside Phase 0.
 | 0 — Auth & compliance | 0.1–0.4 | 4/4 — COMPLETE |
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
-| 2 — Authoring pipeline | 2.1–2.7 | 4/7 — 2.1 ingest, 2.2 comprehension+segmentation, 2.3 slide rendering, 2.4 persona builder |
+| 2 — Authoring pipeline | 2.1–2.7 | 5/7 — 2.1 ingest, 2.2 comprehension+segmentation, 2.3 slide rendering, 2.4 persona builder, 2.5 lesson generation+scenes |
 | 3 — Admin board | 3.1–3.5 | 0/5 |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
@@ -598,7 +598,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   (244 baseline + 9). `import app.main` clean. No migration, no web
   changes.
 
-### [ ] 2.5 — Lesson generation + scene assignment
+### [x] 2.5 — Lesson generation + scene assignment
 - **Why:** produces the actual Aria lesson per confirmed topic, with
   drawings, depth-scaled to the material.
 - **Build:** per-topic generate job → lesson steps from the topic's
@@ -610,7 +610,24 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   steps reference a valid `topic_pages` id; the §4 invariant holds.
 - **Verify:** `pnpm api:test`; generate a Fluids topic, inspect steps.
 - **Depends on:** 2.3, 2.4.
-- **Status:** not started
+- **Status:** BUILT — `app/pipeline/generate.py` (`generate_lesson` core +
+  `generate_topic` DB function + `slice_comprehension`), `generate_script.py`
+  verification script, 22 mocked-Gemini tests in `tests/test_generate.py`.
+  CORE decoupled from the DB: `generate_lesson` takes the topic's
+  title/summary/`comprehension_slice`/`design_notes`/persona params/
+  `topic_pages` directly. Persona via task 2.4's `build_persona`; depth
+  scales (`GeneratedLesson` has NO `max_length` — 8-step rubric dropped);
+  scenes reuse the EXISTING system — `scene_tagger.tag()` typed registry
+  first, the `generate_scene_svgs` Claude `custom-svg` drawer second
+  (injected via `scene_drawer`), a guaranteed text-board scene last, so
+  EVERY step has a non-null scene. A step's `page` is set to a real
+  `topic_pages` row `id` from a 1-based model `page_ref`; 0/out-of-range →
+  no `page` → chalkboard. `generate_topic` writes a `topic_versions` row,
+  sets `topics.active_version_id`, and mirrors the SAME content into
+  `topics.content` (§4 invariant). `pnpm api:test` → 275 passed, 10 skipped
+  (253 baseline + 22). `import app.main` clean. No migration, no live model
+  call, no web changes. The live Fluids generation is run by the
+  orchestrator via `generate_script.py` (one PRO-model call).
 
 ### [ ] 2.6 — Quiz generation (version-scoped)
 - **Why:** each topic ends with a quiz that versions with its lesson.
