@@ -37,6 +37,17 @@ class Settings(BaseSettings):
     gemini_model_embed: str = Field(
         default="gemini-embedding-2", alias="GEMINI_MODEL_EMBED"
     )
+    # Comprehend + segment a unit upload (`model-strategy.md` §6): a one-shot,
+    # quality-critical multimodal call that sets the whole topic tree. Runs on
+    # `gemini-3-flash-preview`, escalating to the pinned PRO model for a large
+    # or messy deck. `segment_escalate_pages` is the combined-page threshold at
+    # which a deck escalates to PRO; `segment_chunk_pages` is the page count
+    # above which the combined payload is chunked and the breakdowns merged.
+    gemini_model_segment: str = Field(
+        default="gemini-3-flash-preview", alias="GEMINI_MODEL_SEGMENT"
+    )
+    segment_escalate_pages: int = Field(default=60, alias="SEGMENT_ESCALATE_PAGES")
+    segment_chunk_pages: int = Field(default=200, alias="SEGMENT_CHUNK_PAGES")
 
     # ── Supabase ────────────────────────────────────────────────────────────
     supabase_url: str = Field(default="", alias="SUPABASE_URL")
@@ -87,6 +98,7 @@ class Settings(BaseSettings):
             "live": self.gemini_model_live,
             "pro": self.gemini_model_pro,
             "embed": self.gemini_model_embed,
+            "segment": self.gemini_model_segment,
         }
 
     @property

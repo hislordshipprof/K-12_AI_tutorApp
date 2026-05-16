@@ -233,6 +233,68 @@ class GeminiService:
         # tenacity always raises on exhaustion — this is just for type-checkers.
         raise RuntimeError("analyze_image: retry loop exhausted without yielding")
 
+    async def generate_from_pdfs(
+        self,
+        pdfs: list[bytes],
+        prompt: str,
+        *,
+        system: str | None = None,
+        model: str | None = None,
+        response_schema: Any | None = None,
+        temperature: float = 0.4,
+    ) -> dict[str, Any]:
+        """Send one or more PDFs + a prompt as a single multimodal request.
+
+        Used by the teacher-authoring comprehension call (`segment.py`): the
+        whole unit's normalized PDFs go inline as `application/pdf` parts in
+        ONE `contents` message, so the model reads every material together.
+        The Fluids PDF is ~3.4 MB — well under the inline-data limit.
+
+        When `response_schema` is given the new SDK parses the response into
+        that Pydantic model and exposes it on `.parsed`.
+
+        Returns a dict:
+            { "text": <raw model output>, "json": <parsed JSON or None> }
+        `json` is the parsed object (`.parsed` when a schema was set, else a
+        best-effort JSON coercion of the text).
+        """
+        model_name = model or settings.gemini_model_text
+
+        parts: list[dict[str, Any]] = [
+            {"inline_data": {"mime_type": "application/pdf", "data": pdf}}
+            for pdf in pdfs
+        ]
+        parts.append({"text": prompt})
+        contents = [{"role": "user", "parts": parts}]
+
+        config: dict[str, Any] = {"temperature": temperature}
+        if system:
+            config["system_instruction"] = system
+        if response_schema is not None:
+            config["response_mime_type"] = "application/json"
+            config["response_schema"] = response_schema
+
+        async for attempt in _retry_policy():
+            with attempt:
+                response = await self.client.aio.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config,
+                )
+                self._log_usage(response, op="generate_from_pdfs")
+                parsed = getattr(response, "parsed", None)
+                text = (
+                    self._extract_text(response)
+                    or getattr(response, "text", "")
+                    or ""
+                )
+                return {
+                    "text": text,
+                    "json": parsed if parsed is not None else _coerce_json(text),
+                }
+
+        raise RuntimeError("generate_from_pdfs: retry loop exhausted without yielding")
+
     async def embed(
         self,
         text: str | list[str],

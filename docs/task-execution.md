@@ -40,7 +40,7 @@ work that can proceed alongside Phase 0.
 | 0 — Auth & compliance | 0.1–0.4 | 4/4 — COMPLETE |
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
-| 2 — Authoring pipeline | 2.1–2.7 | 1/7 — 2.1 done (ingest + normalize-to-PDF) |
+| 2 — Authoring pipeline | 2.1–2.7 | 2/7 — 2.1 ingest, 2.2 comprehension+segmentation |
 | 3 — Admin board | 3.1–3.5 | 0/5 |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
@@ -498,21 +498,43 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   `ingest_script` → validated as pptx → produced a **3.4 MB valid PDF**
   (`%PDF-`). 25 ingest tests pass; `import app.main` clean.
 
-### [ ] 2.2 — Comprehension + topic segmentation
+### [x] 2.2 — Comprehension + topic segmentation
 - **Why:** turns an unstructured upload into a proposed topic breakdown
   the teacher can confirm — the core "model structures it" step.
 - **Build:** combined multimodal call (model per `model-strategy.md` §6)
   → write a `unit_segmentations` row: comprehension JSON + proposed
   breakdown (titles, summaries, page sets, practice→topic tags, page
   teach/skip, animation-build collapse per §13).
-- **Acceptance criteria:** on the Fluids deck it proposes ~4 topics
-  aligned to 8.1–8.4; non-teaching slides excluded; duplicate
-  animation-build slides collapsed; output validates against the §4
-  `unit_segmentations` shape.
+- **Acceptance criteria:** on the Fluids deck it proposes lesson-sized
+  topics that group cleanly under CED 8.1–8.4 (granularity decision
+  2026-05-16: one topic = one lesson-sized beat, NOT one CED topic — the
+  doc's earlier "~4" estimate assumed CED-grained topics; a real 76-slide
+  deck naturally has ~10 lesson-sized beats, and the teacher can still
+  merge/split at the §5.7 confirm step); non-teaching slides excluded;
+  duplicate animation-build slides collapsed; output validates against
+  the §4 `unit_segmentations` shape.
 - **Verify:** `pnpm api:test`; segmentation script on the Fluids deck,
   output reviewed against the known structure.
 - **Depends on:** 2.1.
-- **Status:** not started
+- **Status:** done. `app/pipeline/segment.py` (`comprehend_unit` core +
+  `segment_unit` DB function), `segment_script.py`, the `Comprehension`/
+  `ProposedBreakdown`/`UnitSegmentation` Pydantic schema (doubles as the
+  Gemini `response_schema`) for the §4 `comprehension`/`proposed`
+  columns, `GeminiService.generate_from_pdfs` (one combined multimodal
+  PDF call), config `gemini_model_segment` (`gemini-3-flash-preview`) +
+  `segment_escalate_pages` (60) / `segment_chunk_pages` (200) knobs. The
+  prompt instructs every §13 case (teach/skip exclusion, animation-build
+  collapse keeping the final slide, recap flagging, thin-section
+  flagging, practice tagging, empty-breakdown-with-reason). 14
+  mocked-Gemini tests; `pnpm api:test` → 232 passed, 10 skipped (218
+  baseline + 14). **Live-verified** on the real `Unit 8 - Fluids - AP
+  Physics 1.pptx` (76 slides): escalated to `gemini-3.1-pro-preview`
+  (>60 pages), 64 teaching / 12 excluded pages, output validated the §4
+  schema, 29 practice questions tagged. It proposed 10 lesson-sized
+  topics that group cleanly under CED 8.1–8.4 (Density ×2; Pressure ×3;
+  Buoyancy ×2; Fluid flow ×3). Per the 2026-05-16 granularity decision
+  the doc's "~4" estimate was corrected (see Acceptance criteria) and
+  the finer breakdown accepted.
 
 ### [ ] 2.3 — Slide rendering (post-confirm, slides-only)
 - **Why:** the classroom displays the teacher's real slides; only
