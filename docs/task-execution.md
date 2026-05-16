@@ -40,7 +40,7 @@ work that can proceed alongside Phase 0.
 | 0 — Auth & compliance | 0.1–0.4 | 4/4 — COMPLETE |
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
-| 2 — Authoring pipeline | 2.1–2.7 | 5/7 — 2.1 ingest, 2.2 comprehension+segmentation, 2.3 slide rendering, 2.4 persona builder, 2.5 lesson generation+scenes |
+| 2 — Authoring pipeline | 2.1–2.7 | 6/7 — 2.1 ingest, 2.2 comprehension+segmentation, 2.3 slide rendering, 2.4 persona builder, 2.5 lesson generation+scenes, 2.6 quiz generation |
 | 3 — Admin board | 3.1–3.5 | 0/5 |
 | 4 — Student side | 4.1–4.3 | 0/3 |
 | 5 — Polish | 5.1–5.3 | 0/3 |
@@ -629,7 +629,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   call, no web changes. The live Fluids generation is run by the
   orchestrator via `generate_script.py` (one PRO-model call).
 
-### [ ] 2.6 — Quiz generation (version-scoped)
+### [x] 2.6 — Quiz generation (version-scoped)
 - **Why:** each topic ends with a quiz that versions with its lesson.
 - **Build:** `quiz_questions.topic_version_id`; auto-from-lesson
   generation; practice-material path when `quiz_source = 'practice'`;
@@ -645,7 +645,45 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   material exists.
 - **Verify:** `pnpm api:test`; generate + re-generate a topic's quiz.
 - **Depends on:** 2.5.
-- **Status:** not started
+- **Status:** done. `app/pipeline/quiz.py`: `generate_quiz_set` (auto
+  CORE — reuses the existing `QuizGenerator` against the topic's §2.2
+  `comprehension` slice, decoupled from the DB), `practice_quiz_set` +
+  `practice_tags_for_topic` (practice CORE), `generate_quiz(topic_id)`
+  (DB function). `generate_quiz` loads the topic's `quiz_source` +
+  `active_version_id`, runs the auto or practice path, and writes a fresh
+  `quiz_questions` set with `topic_version_id = active_version_id`. The
+  delete that clears room is SCOPED to `(topic_id, active_version_id)`,
+  so a re-generate after a new `generate_topic` version writes a NEW set
+  under the NEW version and LEAVES the old version's rows (+ their
+  `quiz_attempts`) untouched. The `practice` guard rejects with
+  `QuizError('no_practice_material')` when the unit has no `practice`
+  tags for the topic (or <3 usable questions). RLS migration
+  `20260516000000_quiz_questions_rls.sql` — drops `quiz_questions_read_all`,
+  adds `quiz_questions_read_recommended` (origin='recommended' →
+  world-read) + `quiz_questions_read_teacher` (owner/admin all; active
+  member only on a published topic), mirroring the
+  `topics_read_recommended`/`_teacher` pair, reusing `is_admin` /
+  `is_active_member_of_course`. `quiz_script.py` verification script.
+  15 new mocked-Gemini tests in `tests/test_quiz_generation.py`. `pnpm
+  api:test` → 290 passed, 10 skipped (275 baseline + 15; the 10
+  `test_teacher_rls.py` skips need a live Postgres role). `import
+  app.main` clean. Migration created but NOT applied (orchestrator
+  applies it); no live model call. Practice-question→`quiz_questions`
+  mapping is underspecified in §4 (the `practice_tags` shape carries only
+  a `question_label`, not a structured MCQ) — see the report's judgment
+  call: the practice CORE consumes already-structured MCQs + the tags as
+  the topic FILTER. **Verified by the orchestrator:** RLS migration
+  applied to the cloud DB; a role-switched harness (rolled back) — 5/5
+  PASS: recommended quiz questions stay world-readable, a draft-teacher
+  topic's questions are hidden from an active student, a non-member is
+  denied a published-teacher question, the owner-teacher sees own
+  (published + draft). Live `quiz_script.py` run produced a clean
+  3-question MCQ quiz on the Fluids "Buoyancy & Archimedes" topic.
+  **GAP flagged for review:** the `practice` path consumes
+  already-structured MCQs — the worksheet-PDF → structured-question
+  extraction is NOT built and is not a named task in this plan; it needs
+  a home (a Phase 3 task, or a new task) before `quiz_source='practice'`
+  is end-to-end usable. The `'auto'` path (the default) is complete.
 
 ### [ ] 2.7 — Validator + end-to-end pipeline proof
 - **Why:** generated lessons must actually cover the teacher's content;
