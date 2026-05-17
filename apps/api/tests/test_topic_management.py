@@ -584,6 +584,124 @@ def test_delete_active_version_is_400(
     assert len(versions.rows) == 1
 
 
+# ═══ GET / PATCH /v1/teacher/topics/{id}/versions/{vid} (task 5.1) ════════
+def test_get_topic_version_returns_content(
+    client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The single-version GET carries the version's full `content` so the
+    topic page can diff it against the live lesson."""
+    sb = _make_supabase(
+        role="teacher",
+        courses=_owned_course(),
+        units=_unit(),
+        topics=[_topic()],
+        topic_versions=[_version(V1_ID)],
+    )
+    _wire(monkeypatch, sb)
+
+    r = client.get(
+        f"/v1/teacher/topics/{TOPIC_ID}/versions/{V1_ID}", headers=dev_headers
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] == V1_ID
+    assert body["content"] == [{"tts": "hi", "html": "hi", "dur": "00:00"}]
+
+
+def test_get_topic_version_wrong_topic_is_404(
+    client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fetching a version that belongs to another topic 404s."""
+    versions = _Table(
+        [{**_version(V1_ID), "topic_id": "99999999-9999-9999-9999-999999999999"}]
+    )
+    sb = _make_supabase(
+        role="teacher",
+        courses=_owned_course(),
+        units=_unit(),
+        topics=[_topic()],
+        topic_versions=versions,
+    )
+    _wire(monkeypatch, sb)
+
+    r = client.get(
+        f"/v1/teacher/topics/{TOPIC_ID}/versions/{V1_ID}", headers=dev_headers
+    )
+    assert r.status_code == 404
+
+
+def test_patch_version_label_updates_label(
+    client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Renaming a version writes the new `label` onto the `topic_versions`
+    row and echoes it back."""
+    versions = _Table([_version(V1_ID)])
+    sb = _make_supabase(
+        role="teacher",
+        courses=_owned_course(),
+        units=_unit(),
+        topics=[_topic(active_version_id=V1_ID)],
+        topic_versions=versions,
+    )
+    _wire(monkeypatch, sb)
+
+    r = client.patch(
+        f"/v1/teacher/topics/{TOPIC_ID}/versions/{V1_ID}",
+        headers=dev_headers,
+        json={"label": "added Bernoulli example"},
+    )
+    assert r.status_code == 200
+    assert r.json()["label"] == "added Bernoulli example"
+    assert versions.rows[0]["label"] == "added Bernoulli example"
+
+
+def test_patch_version_label_wrong_topic_is_404(
+    client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Renaming a version that belongs to another topic 404s and writes
+    nothing."""
+    versions = _Table(
+        [{**_version(V1_ID), "topic_id": "99999999-9999-9999-9999-999999999999"}]
+    )
+    sb = _make_supabase(
+        role="teacher",
+        courses=_owned_course(),
+        units=_unit(),
+        topics=[_topic()],
+        topic_versions=versions,
+    )
+    _wire(monkeypatch, sb)
+
+    r = client.patch(
+        f"/v1/teacher/topics/{TOPIC_ID}/versions/{V1_ID}",
+        headers=dev_headers,
+        json={"label": "x"},
+    )
+    assert r.status_code == 404
+    assert versions.rows[0]["label"] == _version(V1_ID)["label"]  # untouched
+
+
+def test_patch_version_label_non_owned_is_404(
+    client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Renaming a version under another teacher's course 404s."""
+    sb = _make_supabase(
+        role="teacher",
+        courses=_other_course(),
+        units=_unit(),
+        topics=[_topic()],
+        topic_versions=[_version(V1_ID)],
+    )
+    _wire(monkeypatch, sb)
+
+    r = client.patch(
+        f"/v1/teacher/topics/{TOPIC_ID}/versions/{V1_ID}",
+        headers=dev_headers,
+        json={"label": "x"},
+    )
+    assert r.status_code == 404
+
+
 # ═══ POST /v1/teacher/topics/{id}/publish ═════════════════════════════════
 def test_publish_succeeds_when_active_version_validated(
     client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch

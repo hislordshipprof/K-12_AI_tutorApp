@@ -432,6 +432,13 @@ class TopicUpdate(BaseModel):
     content: list[dict[str, Any]] | None = None
 
 
+class VersionLabelUpdate(BaseModel):
+    """Request body for `PATCH /v1/teacher/topics/{id}/versions/{vid}` — the
+    teacher's own name for a generated version (task 5.1)."""
+
+    label: str = Field(min_length=1, max_length=80)
+
+
 def _course_owner_for_job(supabase: Any, job: dict[str, Any]) -> str | None:
     """Resolve the `courses.owner_id` that owns this pipeline job.
 
@@ -2006,6 +2013,122 @@ async def delete_topic_version(
             detail="version delete failed",
         ) from e
     return None
+
+
+@router.get("/topics/{topic_id}/versions/{version_id}")
+async def get_topic_version(
+    topic_id: UUID,
+    version_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Return one `topic_versions` row with its full `content` (task 5.1).
+
+    Teacher/admin-gated; the topic's course must be owned by the caller (or
+    caller is admin) else 404. The version must belong to this topic (else
+    404). Used by the topic page's version-diff view, which fetches an
+    older version's steps to compare against the live lesson.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="topic not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_topic(supabase, str(topic_id), caller_id)
+
+    try:
+        v_resp = (
+            supabase.table("topic_versions")
+            .select("id,topic_id,label,content,created_at")
+            .eq("id", str(version_id))
+            .limit(1)
+            .execute()
+        )
+        v_rows = getattr(v_resp, "data", None) or []
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "topic_version_get_failed", error=str(e), version_id=str(version_id)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="topic version lookup failed",
+        ) from e
+
+    if not v_rows or str(v_rows[0].get("topic_id")) != str(topic_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="version not found"
+        )
+    v = v_rows[0]
+    return {
+        "id": str(v["id"]),
+        "label": v.get("label"),
+        "content": v.get("content") or [],
+        "created_at": v.get("created_at"),
+    }
+
+
+@router.patch("/topics/{topic_id}/versions/{version_id}")
+async def update_topic_version_label(
+    topic_id: UUID,
+    version_id: UUID,
+    body: VersionLabelUpdate,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Rename a `topic_versions` row — the teacher's own label (task 5.1).
+
+    Teacher/admin-gated; the topic's course must be owned by the caller (or
+    caller is admin) else 404. The version must belong to this topic (else
+    404). Only `label` is editable — a version's `content` is immutable.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="topic not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_topic(supabase, str(topic_id), caller_id)
+
+    label = body.label.strip()
+    if not label:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="label cannot be blank",
+        )
+
+    try:
+        v_resp = (
+            supabase.table("topic_versions")
+            .select("id,topic_id")
+            .eq("id", str(version_id))
+            .limit(1)
+            .execute()
+        )
+        v_rows = getattr(v_resp, "data", None) or []
+        if not v_rows or str(v_rows[0].get("topic_id")) != str(topic_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="version not found"
+            )
+        upd = (
+            supabase.table("topic_versions")
+            .update({"label": label})
+            .eq("id", str(version_id))
+            .execute()
+        )
+        rows = getattr(upd, "data", None) or []
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "topic_version_label_failed", error=str(e), version_id=str(version_id)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="version label update failed",
+        ) from e
+
+    return {"id": str(version_id), "label": rows[0].get("label") if rows else label}
 
 
 @router.post("/topics/{topic_id}/publish")

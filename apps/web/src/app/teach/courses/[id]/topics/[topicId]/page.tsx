@@ -147,6 +147,18 @@ export default function TopicPage() {
     onSuccess: invalidate,
   });
 
+  const labelMut = useMutation({
+    mutationFn: (v: { versionId: string; label: string }) =>
+      api(`/v1/teacher/topics/${topicId}/versions/${v.versionId}`, {
+        method: 'PATCH',
+        json: { label: v.label },
+      }),
+    onSuccess: invalidate,
+  });
+
+  // The non-active version currently expanded in the diff panel, if any.
+  const [comparingId, setComparingId] = useState<string | null>(null);
+
   const publishMut = useMutation({
     mutationFn: () =>
       api(`/v1/teacher/topics/${topicId}/publish`, { method: 'POST' }),
@@ -400,19 +412,43 @@ export default function TopicPage() {
           <section>
             <SectHd
               title="Versions"
-              sub="Every generation is kept — switch the live one or delete old drafts."
+              sub="Every generation is kept — rename, compare, switch the live one or delete old drafts."
             />
             <div className="overflow-hidden rounded-[20px] border border-border bg-white shadow-sm">
-              {data.versions.map((v) => (
+              {data.versions.map((v, i) => (
                 <VersionRow
                   key={v.id}
                   version={v}
-                  busy={activateMut.isPending || deleteMut.isPending}
+                  gen={data.versions.length - i}
+                  busy={
+                    activateMut.isPending ||
+                    deleteMut.isPending ||
+                    labelMut.isPending
+                  }
+                  comparing={comparingId === v.id}
                   onActivate={() => activateMut.mutate(v.id)}
                   onDelete={() => deleteMut.mutate(v.id)}
+                  onRename={(label) =>
+                    labelMut.mutate({ versionId: v.id, label })
+                  }
+                  onCompare={() =>
+                    setComparingId(comparingId === v.id ? null : v.id)
+                  }
                 />
               ))}
             </div>
+            {comparingId && (
+              <VersionDiff
+                topicId={topicId}
+                versionId={comparingId}
+                versionLabel={
+                  data.versions.find((v) => v.id === comparingId)?.label ??
+                  'this version'
+                }
+                liveContent={data.content}
+                onClose={() => setComparingId(null)}
+              />
+            )}
           </section>
         )}
       </div>
@@ -732,52 +768,129 @@ function StepCard({
 
 function VersionRow({
   version,
+  gen,
   busy,
+  comparing,
   onActivate,
   onDelete,
+  onRename,
+  onCompare,
 }: {
   version: Version;
+  /** Immutable generation number (oldest = 1) — the badge anchor. */
+  gen: number;
   busy: boolean;
+  comparing: boolean;
   onActivate: () => void;
   onDelete: () => void;
+  onRename: (label: string) => void;
+  onCompare: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(version.label);
   const v = version;
   const valid = v.validation?.passed === true;
+
+  const saveLabel = () => {
+    const next = draft.trim();
+    if (next && next !== v.label) onRename(next);
+    setEditing(false);
+  };
+  const cancelEdit = () => {
+    setDraft(v.label);
+    setEditing(false);
+  };
 
   return (
     <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3.5 last:border-b-0">
       <div className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl bg-paper-2 font-display text-[12px] font-bold text-ink-2">
-        {v.label}
+        v{gen}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold text-ink">{v.label}</span>
-          {v.active && (
-            <span className="rounded-full bg-indigo-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-indigo">
-              Live
-            </span>
-          )}
-          {v.validation && (
-            <span
-              className={cn(
-                'rounded-full px-2 py-0.5 text-[10px] font-bold',
-                valid
-                  ? 'bg-mint-soft text-[#1C7A47]'
-                  : 'bg-amber-soft text-[#8A6800]',
-              )}
+        {editing ? (
+          <div className="flex items-center gap-1.5">
+            <input
+              autoFocus
+              value={draft}
+              maxLength={80}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveLabel();
+                if (e.key === 'Escape') cancelEdit();
+              }}
+              className="min-w-0 flex-1 rounded-lg border border-border-2 bg-paper px-2.5 py-1 text-sm text-ink outline-none transition focus:border-indigo focus:bg-white focus:ring-2 focus:ring-indigo/15"
+            />
+            <button
+              type="button"
+              onClick={saveLabel}
+              disabled={busy}
+              className="rounded-lg bg-indigo px-2.5 py-1 text-[12px] font-semibold text-white transition-colors hover:bg-indigo-deep disabled:opacity-40"
             >
-              {valid
-                ? 'validated'
-                : `${v.validation.covered}/${v.validation.total} covered`}
-            </span>
-          )}
-        </div>
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={cancelEdit}
+              className="rounded-lg px-2 py-1 text-[12px] font-semibold text-ink-3 transition-colors hover:bg-paper-2 hover:text-ink"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-ink">{v.label}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(v.label);
+                setEditing(true);
+              }}
+              className="text-[11px] font-semibold text-indigo transition-colors hover:text-indigo-deep"
+            >
+              Rename
+            </button>
+            {v.active && (
+              <span className="rounded-full bg-indigo-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-indigo">
+                Live
+              </span>
+            )}
+            {v.validation && (
+              <span
+                className={cn(
+                  'rounded-full px-2 py-0.5 text-[10px] font-bold',
+                  valid
+                    ? 'bg-mint-soft text-[#1C7A47]'
+                    : 'bg-amber-soft text-[#8A6800]',
+                )}
+              >
+                {valid
+                  ? 'validated'
+                  : `${v.validation.covered}/${v.validation.total} covered`}
+              </span>
+            )}
+          </div>
+        )}
         <div className="text-xs text-ink-3">
           generated {shortDateTime(v.created_at)}
         </div>
       </div>
       <div className="flex items-center gap-2">
+        {!v.active && (
+          <button
+            type="button"
+            onClick={onCompare}
+            disabled={busy}
+            className={cn(
+              'rounded-lg border px-3 py-1.5 text-[12px] font-semibold transition-colors disabled:opacity-40',
+              comparing
+                ? 'border-indigo bg-indigo-soft text-indigo'
+                : 'border-border-2 text-ink-2 hover:border-indigo hover:bg-indigo-soft hover:text-indigo',
+            )}
+          >
+            {comparing ? 'Hide diff' : 'Compare'}
+          </button>
+        )}
         {!v.active && (
           <button
             type="button"
@@ -818,6 +931,179 @@ function VersionRow({
               <Icon name="close" size={14} />
             </button>
           ))}
+      </div>
+    </div>
+  );
+}
+
+/** Plain caption text of a step — HTML tags stripped — for the diff. */
+function stepText(s: Step): string {
+  return (s.html || s.tts || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+type DiffStatus = 'same' | 'changed' | 'added' | 'removed';
+
+/**
+ * Version-diff panel (task 5.1). Fetches the selected version's full
+ * `content` and diffs it, step-by-step, against the live lesson — so a
+ * teacher can see exactly what changed before switching the live version.
+ */
+function VersionDiff({
+  topicId,
+  versionId,
+  versionLabel,
+  liveContent,
+  onClose,
+}: {
+  topicId: string;
+  versionId: string;
+  versionLabel: string;
+  liveContent: Step[];
+  onClose: () => void;
+}) {
+  const { data, isLoading, isError } = useQuery<{
+    id: string;
+    label: string;
+    content: Step[];
+  }>({
+    queryKey: ['teacher-topic-version', topicId, versionId],
+    queryFn: () => api(`/v1/teacher/topics/${topicId}/versions/${versionId}`),
+  });
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-[18px] border border-border bg-white shadow-sm">
+      <div className="flex items-center justify-between border-b border-border px-5 py-3">
+        <div className="text-sm font-semibold text-ink">
+          Comparing <span className="text-indigo">{versionLabel}</span>
+          {' → '}
+          <span className="text-indigo">Live version</span>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close diff"
+          className="grid h-7 w-7 place-items-center rounded-lg text-ink-3 transition-colors hover:bg-paper-2 hover:text-ink"
+        >
+          <Icon name="close" size={14} />
+        </button>
+      </div>
+      {isLoading && (
+        <div className="px-5 py-6 text-sm text-ink-3">Loading version…</div>
+      )}
+      {isError && (
+        <div className="px-5 py-6 text-sm text-coral">
+          Couldn&apos;t load that version.
+        </div>
+      )}
+      {data && <DiffBody from={data.content} to={liveContent} />}
+    </div>
+  );
+}
+
+function DiffBody({ from, to }: { from: Step[]; to: Step[] }) {
+  const max = Math.max(from.length, to.length);
+  const rows: { i: number; status: DiffStatus; from?: Step; to?: Step }[] = [];
+  const counts = { added: 0, removed: 0, changed: 0, same: 0 };
+  for (let i = 0; i < max; i++) {
+    const a = from[i];
+    const b = to[i];
+    let status: DiffStatus;
+    // `i < max` guarantees at least one side is present; the first two
+    // branches handle the one-sided cases, so by the third both exist.
+    if (a && !b) status = 'removed';
+    else if (!a && b) status = 'added';
+    else if (stepText(a!) !== stepText(b!)) status = 'changed';
+    else status = 'same';
+    counts[status] += 1;
+    rows.push({ i, status, from: a, to: b });
+  }
+
+  if (max === 0) {
+    return (
+      <div className="px-5 py-6 text-sm text-ink-3">
+        Neither version has any steps yet.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex flex-wrap gap-3 border-b border-border bg-paper px-5 py-2.5 text-[12px] font-medium text-ink-3">
+        <span>
+          <b className="text-[#1C7A47]">{counts.added}</b> added
+        </span>
+        <span>
+          <b className="text-coral">{counts.removed}</b> removed
+        </span>
+        <span>
+          <b className="text-[#8A6800]">{counts.changed}</b> changed
+        </span>
+        <span>
+          <b className="text-ink-2">{counts.same}</b> unchanged
+        </span>
+      </div>
+      <div className="divide-y divide-border">
+        {rows.map((r) => (
+          <DiffRow key={r.i} index={r.i} status={r.status} from={r.from} to={r.to} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const DIFF_META: Record<DiffStatus, { label: string; cls: string }> = {
+  added: { label: 'Added', cls: 'bg-mint-soft text-[#1C7A47]' },
+  removed: { label: 'Removed', cls: 'bg-coral-soft text-coral' },
+  changed: { label: 'Changed', cls: 'bg-amber-soft text-[#8A6800]' },
+  same: { label: 'Unchanged', cls: 'bg-paper-2 text-ink-3' },
+};
+
+function DiffRow({
+  index,
+  status,
+  from,
+  to,
+}: {
+  index: number;
+  status: DiffStatus;
+  from?: Step;
+  to?: Step;
+}) {
+  const meta = DIFF_META[status];
+  return (
+    <div className="flex gap-3 px-5 py-3">
+      <div className="w-14 flex-shrink-0 pt-0.5 text-[12px] font-semibold tabular-nums text-ink-3">
+        Step {index + 1}
+      </div>
+      <div className="min-w-0 flex-1">
+        <span
+          className={cn(
+            'mb-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.06em]',
+            meta.cls,
+          )}
+        >
+          {meta.label}
+        </span>
+        {status === 'changed' ? (
+          <div className="space-y-1">
+            <div className="text-[13px] text-ink-3 line-through">
+              {stepText(from!)}
+            </div>
+            <div className="text-[13px] text-ink">{stepText(to!)}</div>
+          </div>
+        ) : (
+          <div
+            className={cn(
+              'text-[13px]',
+              status === 'same' ? 'text-ink-3' : 'text-ink',
+            )}
+          >
+            {stepText((to ?? from)!)}
+          </div>
+        )}
       </div>
     </div>
   );

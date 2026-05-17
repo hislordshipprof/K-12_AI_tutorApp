@@ -43,7 +43,7 @@ work that can proceed alongside Phase 0.
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
 | 3 — Admin board | 3.1–3.6 | 6/6 — COMPLETE (scaffold · class mgmt · course/unit + upload · segmentation + confirm · topic generate/publish · assign courses to classes) |
 | 4 — Student side | 4.1–4.3 | 3/3 — COMPLETE (dashboard split · join-a-class · classroom slide + annotation) |
-| 5 — Polish | 5.1–5.3 | 0/3 |
+| 5 — Polish | 5.1–5.4 | 1/4 — 5.1 (version-management UX) done; 5.4 = re-segmentation mapping flow |
 
 ---
 
@@ -1258,16 +1258,47 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
 
 > Section 5 is non-blocking refinement; each task is independent.
 
-### [ ] 5.1 — Re-generation / version-management UX
-- **Why:** make the version history (§11.3) usable — labels, diffs,
-  delete-old.
-- **Build:** version UX in the topic page; the §13 re-segmentation-
-  after-publish mapping flow.
-- **Acceptance criteria:** a teacher manages versions and handles a
-  re-segmentation of a unit with published topics without data loss.
+### [x] 5.1 — Version-management UX
+- **Why:** make the generated-lesson version history (§11.3) usable.
+  Task 3.5 ships the version list with activate / delete; this adds the
+  two missing pieces — a teacher can **label** a version and **diff**
+  two versions to see what changed before switching the live one.
+- **Build:** a label-edit endpoint (`PATCH .../topics/{id}/versions/`
+  `{vid}` → `topic_versions.label`); a version-diff view in the topic
+  page.
+- **Acceptance criteria:** a teacher can rename a version, and can
+  compare two versions and see which steps were added / removed /
+  changed.
 - **Verify:** `pnpm verify`.
 - **Depends on:** 3.5.
-- **Status:** not started
+- **Status:** done (2026-05-17). Split from the original 5.1 — the §13
+  re-segmentation-after-publish mapping flow is now task 5.4.
+  API (`app/api/v1/teacher.py`): `PATCH /v1/teacher/topics/{id}/`
+  `versions/{vid}` renames a version (writes `topic_versions.label`);
+  `GET /v1/teacher/topics/{id}/versions/{vid}` returns one version with
+  its full `content`. Both teacher/admin-gated + `_load_owned_topic`,
+  and 404 if the version does not belong to the topic.
+  Web (`teach/courses/[id]/topics/[topicId]/page.tsx`): each
+  `VersionRow` gained an inline **Rename** edit and a **Compare**
+  toggle; the badge now shows the immutable generation number (`v{n}`)
+  so a renamed label does not lose its anchor. A new `VersionDiff`
+  panel fetches the selected version's content and diffs it step-by-step
+  against the live lesson — an index-aligned diff tagging each step
+  Added / Removed / Changed / Unchanged, with a count summary and
+  before/after caption text on changed steps.
+  Tests: 5 added to `test_topic_management.py` (GET version + content,
+  GET wrong-topic 404, PATCH label, PATCH wrong-topic 404, PATCH
+  non-owned 404). Full API suite 420→425 passed.
+  >
+  > **Verified.** `pnpm verify` → typecheck/lint/build green, phases 1–2
+  > all pass. `pnpm api:test` → 425 passed, 10 skipped. **Browser**
+  > (signed in as the e2e teacher, on a topic with 7 versions): clicking
+  > **Compare** on a non-active version opened the diff panel —
+  > "Comparing v6 → Live", summary "3 added · 0 removed · 10 changed ·
+  > 1 unchanged", per-step Added/Changed rows with before/after text;
+  > clicking **Rename**, editing the label and saving renamed the
+  > version (confirmed on the cloud DB) and the list refetched with the
+  > new name. No console errors. No migration. Next: 5.2.
 
 ### [ ] 5.2 — Course cover art
 - **Why:** teacher courses need visual identity on the dashboard.
@@ -1286,4 +1317,22 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   topic.
 - **Verify:** `pnpm verify`.
 - **Depends on:** 4.3.
+- **Status:** not started
+
+### [ ] 5.4 — Re-segmentation-after-publish mapping flow
+- **Why:** §13 — re-segmenting a unit that already has PUBLISHED topics
+  must *diff* the proposed breakdown against existing topics and let the
+  teacher map each (keep / replace / add / retire) rather than
+  auto-deleting. Carved out of the original 5.1 (2026-05-17) because it
+  is a large feature the doc specifies only at the behaviour level.
+- **Build:** needs a **design pass first** — §13 gives the behaviour but
+  not the mechanism: a `retired` topic state, the re-segment diff, an
+  apply-mapping endpoint, and a migration. Design, get sign-off, then
+  build.
+- **Acceptance criteria:** re-segmenting a unit with published topics
+  proposes a diff; the teacher maps proposed→existing; replace follows
+  the §4 progress-reset rule; retire hides the topic from new students
+  while in-progress students keep it; no data loss.
+- **Verify:** `pnpm verify`; re-segment a unit with a published topic.
+- **Depends on:** 3.4, 3.5.
 - **Status:** not started
