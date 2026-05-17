@@ -189,13 +189,19 @@ export default function ClassDetailPage() {
               {data.subject && (
                 <div className="mt-1 text-sm text-white/55">{data.subject}</div>
               )}
-              <div className="mt-4 flex flex-wrap gap-2.5">
+              <div className="mt-4 flex flex-wrap items-center gap-2.5">
                 <StatChip n={roster.length} label="Students" />
                 <StatChip
                   n={pending.length}
                   label="Pending"
                   tone={pending.length > 0 ? 'amber' : 'plain'}
                 />
+                <Link
+                  href={`/teach/classes/${classId}/analytics`}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.06] px-3.5 py-1.5 text-xs font-semibold text-white/80 transition-colors hover:bg-white/15 hover:text-white"
+                >
+                  <Icon name="history" size={13} /> Class progress
+                </Link>
               </div>
             </div>
 

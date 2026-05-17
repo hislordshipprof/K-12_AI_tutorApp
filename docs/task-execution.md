@@ -43,7 +43,7 @@ work that can proceed alongside Phase 0.
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
 | 3 — Admin board | 3.1–3.6 | 6/6 — COMPLETE (scaffold · class mgmt · course/unit + upload · segmentation + confirm · topic generate/publish · assign courses to classes) |
 | 4 — Student side | 4.1–4.3 | 3/3 — COMPLETE (dashboard split · join-a-class · classroom slide + annotation) |
-| 5 — Polish | 5.1–5.4 | 2/4 — 5.1 (version UX) · 5.2 (course cover art) done; 5.4 = re-segmentation mapping flow |
+| 5 — Polish | 5.1–5.4 | 3/4 — 5.1 (version UX) · 5.2 (cover art) · 5.3 (analytics) done; 5.4 = re-segmentation mapping flow |
 
 ---
 
@@ -1339,14 +1339,41 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   > cover (`background-image` = the public cover URL, which loaded 200).
   > No console errors. Next: 5.3.
 
-### [ ] 5.3 — Analytics
+### [x] 5.3 — Analytics
 - **Why:** teachers want to see how their class is doing.
 - **Build:** per-class progress/score view for the teacher.
 - **Acceptance criteria:** a teacher sees aggregate class progress per
   topic.
 - **Verify:** `pnpm verify`.
 - **Depends on:** 4.3.
-- **Status:** not started
+- **Status:** done (2026-05-17).
+  API: new `GET /v1/teacher/classes/{id}/analytics` — teacher/admin-gated,
+  the class must be the caller's own (404 otherwise). For every PUBLISHED
+  topic of every course assigned to the class it reports `started`
+  (active students with a `topic_progress` row), `completed` (`status=
+  'done'`) and `avg_score` (mean of non-null `topic_progress.score`),
+  grouped course → unit → topic. Draft topics, and units / courses with
+  no published topic, are omitted; only **active** members count.
+  Web: new dedicated page `/teach/classes/[id]/analytics` (the
+  user-chosen layout) — a dark teach-board header + per-course cards with
+  per-topic rows (completion bar + `done/total`, started count, average-
+  score chip); empty states for a class with no students / no published
+  topics. The class detail page header gained a "Class progress" link.
+  Tests: new `test_class_analytics.py` (5 — per-topic aggregation incl.
+  pending-member / non-member exclusion, empty class all-zeroes,
+  all-draft course omitted, non-owned 404, non-teacher 403). Suite
+  430→435.
+  >
+  > **Verified.** `pnpm verify` green; `pnpm api:test` → 435 passed.
+  > **Live on the cloud DB**: as the owning teacher, the analytics for a
+  > class with one active student and a course of 1 published + 6 draft
+  > topics returned `student_count=1`, the single published topic only
+  > (6 drafts excluded), `started=1 completed=1 avg_score=88` against a
+  > seeded `topic_progress` row; a non-teacher caller got 403.
+  > **Browser** (signed in as the owning teacher): the analytics page
+  > rendered "Class progress", the published topic row showing "1/1
+  > done" + "88%", no draft topics, the "1 Student" chip. No console
+  > errors. No migration. Next: 5.4.
 
 ### [ ] 5.4 — Re-segmentation-after-publish mapping flow
 - **Why:** §13 — re-segmenting a unit that already has PUBLISHED topics

@@ -978,6 +978,177 @@ async def remove_class_member(
     return None
 
 
+@router.get("/classes/{class_id}/analytics")
+async def get_class_analytics(
+    class_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Aggregate per-topic progress for a class (task 5.3).
+
+    Teacher/admin-gated; the class must be owned by the caller (or caller is
+    admin) else 404. For every PUBLISHED topic of every course assigned to
+    the class, reports how many of the class's **active** students have
+    started it (`topic_progress` row), how many have completed it
+    (`status='done'`) and their average score — grouped course -> unit ->
+    topic. Draft topics, and units / courses with no published topic, are
+    omitted (students can only ever reach published topics).
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="class not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    cls = _load_owned_class(supabase, str(class_id), caller_id)
+
+    courses_out: list[dict[str, Any]] = []
+    student_ids: list[str] = []
+    try:
+        m_resp = (
+            supabase.table("class_members")
+            .select("student_id,status")
+            .eq("class_id", str(class_id))
+            .eq("status", "active")
+            .execute()
+        )
+        student_ids = [
+            str(m["student_id"])
+            for m in (getattr(m_resp, "data", None) or [])
+            if m.get("student_id")
+        ]
+
+        cc_resp = (
+            supabase.table("class_courses")
+            .select("course_id")
+            .eq("class_id", str(class_id))
+            .execute()
+        )
+        course_ids = [
+            str(r["course_id"])
+            for r in (getattr(cc_resp, "data", None) or [])
+            if r.get("course_id")
+        ]
+
+        if course_ids:
+            c_resp = (
+                supabase.table("courses")
+                .select("id,title")
+                .in_("id", course_ids)
+                .execute()
+            )
+            courses = {
+                str(c["id"]): c for c in (getattr(c_resp, "data", None) or [])
+            }
+
+            u_resp = (
+                supabase.table("units")
+                .select("id,course_id,name,n")
+                .in_("course_id", course_ids)
+                .execute()
+            )
+            units = getattr(u_resp, "data", None) or []
+
+            topics: list[dict[str, Any]] = []
+            unit_ids = [str(u["id"]) for u in units]
+            if unit_ids:
+                t_resp = (
+                    supabase.table("topics")
+                    .select("id,unit_id,name,n,status")
+                    .in_("unit_id", unit_ids)
+                    .eq("status", "published")
+                    .execute()
+                )
+                topics = getattr(t_resp, "data", None) or []
+
+            prog: dict[str, list[dict[str, Any]]] = {}
+            topic_ids = [str(t["id"]) for t in topics]
+            if topic_ids and student_ids:
+                p_resp = (
+                    supabase.table("topic_progress")
+                    .select("topic_id,user_id,status,score")
+                    .in_("topic_id", topic_ids)
+                    .in_("user_id", student_ids)
+                    .execute()
+                )
+                for row in getattr(p_resp, "data", None) or []:
+                    prog.setdefault(str(row.get("topic_id")), []).append(row)
+
+            def _stats(topic_id: str) -> dict[str, Any]:
+                rows = prog.get(topic_id, [])
+                scores = [
+                    int(r["score"]) for r in rows if r.get("score") is not None
+                ]
+                return {
+                    "started": len(rows),
+                    "completed": sum(1 for r in rows if r.get("status") == "done"),
+                    "avg_score": round(sum(scores) / len(scores))
+                    if scores
+                    else None,
+                }
+
+            units_by_course: dict[str, list[dict[str, Any]]] = {}
+            for u in units:
+                units_by_course.setdefault(str(u["course_id"]), []).append(u)
+            topics_by_unit: dict[str, list[dict[str, Any]]] = {}
+            for t in topics:
+                topics_by_unit.setdefault(str(t["unit_id"]), []).append(t)
+
+            def _ord(row: dict[str, Any]) -> int:
+                return int(row.get("n") or 0)
+
+            for cid in course_ids:
+                course = courses.get(cid)
+                if not course:
+                    continue
+                units_out: list[dict[str, Any]] = []
+                for u in sorted(units_by_course.get(cid, []), key=_ord):
+                    t_rows = sorted(
+                        topics_by_unit.get(str(u["id"]), []), key=_ord
+                    )
+                    if not t_rows:
+                        continue
+                    units_out.append(
+                        {
+                            "unit_id": str(u["id"]),
+                            "name": u.get("name"),
+                            "n": u.get("n"),
+                            "topics": [
+                                {
+                                    "topic_id": str(t["id"]),
+                                    "name": t.get("name"),
+                                    "n": t.get("n"),
+                                    **_stats(str(t["id"])),
+                                }
+                                for t in t_rows
+                            ],
+                        }
+                    )
+                if units_out:
+                    courses_out.append(
+                        {
+                            "course_id": cid,
+                            "title": course.get("title"),
+                            "units": units_out,
+                        }
+                    )
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "class_analytics_failed", error=str(e), class_id=str(class_id)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="class analytics lookup failed",
+        ) from e
+
+    return {
+        "class_id": str(class_id),
+        "class_name": cls.get("name"),
+        "student_count": len(student_ids),
+        "courses": courses_out,
+    }
+
+
 # ─── course / unit authoring (`/teach/courses/[id]`, `teacher-authoring.md`
 # §4/§6/§9) ────────────────────────────────────────────────────────────────
 @router.post("/courses", status_code=status.HTTP_201_CREATED)
