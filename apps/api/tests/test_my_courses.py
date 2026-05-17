@@ -160,15 +160,18 @@ def test_my_courses_teacher_course_with_no_published_topics(
     assert teacher["published_topic_count"] == 0
 
 
-def test_my_courses_ignores_pending_membership(
+def test_my_courses_surfaces_pending_membership_as_awaiting_approval(
     client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A pending (not yet approved) membership grants no teacher courses."""
+    """A pending (not yet approved) membership grants no teacher course but
+    is surfaced as a `group='pending'` item — id = class id, title = class
+    name — so the dashboard can show "awaiting approval" (task 4.2)."""
     sb = _make_supabase(
         courses=[
             _course(REC_COURSE, "ap-physics-1", "recommended", exam="AP"),
             _course(TEACHER_COURSE, "fluids-x", "teacher", subject="Physics"),
         ],
+        classes=[{"id": CLASS_ID, "name": "Period 1 Physics"}],
         class_members=[
             {"class_id": CLASS_ID, "student_id": CALLER, "status": "pending"}
         ],
@@ -178,8 +181,49 @@ def test_my_courses_ignores_pending_membership(
 
     r = client.get("/v1/me/courses", headers=dev_headers)
     assert r.status_code == 200
-    groups = {c["group"] for c in r.json()}
-    assert groups == {"recommended"}
+    by_group: dict[str, list[dict[str, Any]]] = {}
+    for c in r.json():
+        by_group.setdefault(c["group"], []).append(c)
+    # The unapproved membership leaks no teacher course…
+    assert "teacher" not in by_group
+    # …but the class itself shows up as awaiting approval.
+    pending = by_group["pending"]
+    assert len(pending) == 1
+    assert pending[0]["id"] == CLASS_ID
+    assert pending[0]["title"] == "Period 1 Physics"
+    assert pending[0]["slug"] is None
+    assert pending[0]["published_topic_count"] is None
+
+
+def test_my_courses_pending_and_active_memberships_coexist(
+    client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller with one active and one pending membership sees the active
+    class's teacher course AND the pending class as awaiting approval."""
+    other_class = "55555555-5555-5555-5555-555555555555"
+    sb = _make_supabase(
+        courses=[
+            _course(REC_COURSE, "ap-physics-1", "recommended", exam="AP"),
+            _course(TEACHER_COURSE, "fluids-x", "teacher", subject="Physics"),
+        ],
+        classes=[{"id": other_class, "name": "Period 2 Chemistry"}],
+        class_members=[
+            {"class_id": CLASS_ID, "student_id": CALLER, "status": "active"},
+            {"class_id": other_class, "student_id": CALLER, "status": "pending"},
+        ],
+        class_courses=[{"class_id": CLASS_ID, "course_id": TEACHER_COURSE}],
+        units=[{"id": UNIT_ID, "course_id": TEACHER_COURSE}],
+        topics=[{"unit_id": UNIT_ID, "status": "published"}],
+    )
+    monkeypatch.setattr("app.api.v1.me.get_supabase", lambda: sb)
+
+    r = client.get("/v1/me/courses", headers=dev_headers)
+    assert r.status_code == 200
+    by_group: dict[str, list[dict[str, Any]]] = {}
+    for c in r.json():
+        by_group.setdefault(c["group"], []).append(c)
+    assert by_group["teacher"][0]["id"] == TEACHER_COURSE
+    assert by_group["pending"][0]["title"] == "Period 2 Chemistry"
 
 
 # ═══ GET /v1/courses — scoped to Recommended ══════════════════════════════

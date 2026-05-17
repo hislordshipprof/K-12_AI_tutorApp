@@ -224,12 +224,15 @@ async def list_my_courses(
     """The dashboard course list, split into Recommended + teacher courses.
 
     Each item carries a `group` field — `'recommended'` (the built-in
-    OpenStax courses, `origin='recommended'`) or `'teacher'` (a course
+    OpenStax courses, `origin='recommended'`), `'teacher'` (a course
     assigned to a class the caller is an **active** member of, reached via
-    `class_members` -> `class_courses`, `teacher-authoring.md` §8 / §10).
-    A teacher item also carries `published_topic_count` so the dashboard
-    can show "coming soon" for an all-draft course; it is `null` on a
-    Recommended course (always enterable).
+    `class_members` -> `class_courses`, `teacher-authoring.md` §8 / §10),
+    or `'pending'` (a class the caller has requested to join but the
+    teacher has not yet approved — surfaced so the dashboard can show
+    "awaiting approval"; its `title` is the class name and it has no
+    `slug`). A teacher item also carries `published_topic_count` so the
+    dashboard can show "coming soon" for an all-draft course; it is `null`
+    on a Recommended or pending item.
 
     The service-role client bypasses RLS, so the teacher set is scoped to
     the caller explicitly — only classes the caller actively belongs to.
@@ -328,6 +331,44 @@ async def list_my_courses(
                 _item(c, "teacher", published.get(str(c["id"]), 0))
                 for c in teacher_courses
             )
+
+        # Pending — classes the caller has requested to join but the
+        # teacher has not yet approved. Surfaced as `group='pending'`
+        # items (id = class id, title = class name) so the dashboard can
+        # show "awaiting approval" (`teacher-authoring.md` §8 / §10).
+        p_resp = (
+            supabase.table("class_members")
+            .select("class_id")
+            .eq("student_id", caller_id)
+            .eq("status", "pending")
+            .execute()
+        )
+        pending_ids = [
+            str(m["class_id"])
+            for m in (getattr(p_resp, "data", None) or [])
+            if m.get("class_id")
+        ]
+        if pending_ids:
+            pc_resp = (
+                supabase.table("classes")
+                .select("id,name")
+                .in_("id", pending_ids)
+                .execute()
+            )
+            for c in getattr(pc_resp, "data", None) or []:
+                out.append(
+                    {
+                        "id": str(c["id"]),
+                        "slug": None,
+                        "title": c.get("name"),
+                        "exam": None,
+                        "subject": None,
+                        "color_gradient": None,
+                        "icon_emoji": None,
+                        "group": "pending",
+                        "published_topic_count": None,
+                    }
+                )
     except Exception as e:  # noqa: BLE001
         log.warning("me_courses_lookup_failed", error=str(e), user=caller_id)
         raise HTTPException(

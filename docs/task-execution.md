@@ -42,7 +42,7 @@ work that can proceed alongside Phase 0.
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
 | 3 — Admin board | 3.1–3.6 | 6/6 — COMPLETE (scaffold · class mgmt · course/unit + upload · segmentation + confirm · topic generate/publish · assign courses to classes) |
-| 4 — Student side | 4.1–4.3 | 1/3 — 4.1 (dashboard split) done |
+| 4 — Student side | 4.1–4.3 | 2/3 — 4.1 (dashboard split) · 4.2 (join-a-class) done |
 | 5 — Polish | 5.1–5.3 | 0/3 |
 
 ---
@@ -1154,7 +1154,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   > fresh student session would not establish in the preview browser (an
   > environment limitation, not a 4.1 defect). No migration. Next: 4.2.
 
-### [ ] 4.2 — Join-a-class flow
+### [x] 4.2 — Join-a-class flow
 - **Why:** students join a class with a code and wait for approval.
 - **Build:** the "Join a class" action → `POST /v1/classes/join` →
   `pending` membership; "awaiting approval" state on the dashboard.
@@ -1163,7 +1163,48 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   courses appear; an invalid code errors cleanly.
 - **Verify:** `pnpm verify`; join→approve→access end to end.
 - **Depends on:** 4.1, 3.2.
-- **Status:** not started
+- **Status:** done (2026-05-16).
+  `POST /v1/classes/join` and the teacher approve/remove endpoints
+  already existed (built earlier, tested in `test_class_management.py`),
+  so 4.2 was the missing surfacing + UI.
+  API: `GET /v1/me/courses` (`app/api/v1/me.py`) gained a third group —
+  `'pending'`: a class the caller has a `pending` (not yet approved)
+  `class_members` row for is returned as an item with `group='pending'`,
+  `id` = class id, `title` = class name, no `slug`. The unapproved
+  membership leaks no teacher course; the class itself shows so the
+  dashboard can render "awaiting approval".
+  Web: new `components/dashboard/join-class-modal.tsx` — a modal (the
+  user-chosen pattern, mirrors `create-course-modal`) with a join-code
+  field → `POST /v1/classes/join`; on success it invalidates
+  `['dashboard-courses']` and shows a confirmation (pending → "request
+  sent, awaiting approval"; already-active → "you're already in"). A
+  404 maps to a friendly "couldn't find a class with that code". The
+  dashboard's "From your teacher" section now renders **always** (so the
+  "Join a class" button has a home), with an empty state when the
+  student has no classes; a `group='pending'` item renders as a muted,
+  non-enterable `PendingClassCard` ("Awaiting approval").
+  Tests: `test_my_courses.py` — the old `ignores_pending_membership`
+  test became `surfaces_pending_membership_as_awaiting_approval` (pending
+  leaks no teacher course but surfaces as `group='pending'`), plus a new
+  `pending_and_active_memberships_coexist`. File 5→6 tests; full API
+  suite 411→412 passed.
+  >
+  > **Verified.** `pnpm verify` → typecheck/lint/build green, phases 1–2
+  > all pass. `pnpm api:test` → 412 passed, 10 skipped. **Live on the
+  > cloud DB** (join→approve→access end to end): the dev student
+  > `POST /v1/classes/join` with class `a41be5bc`'s code → 200
+  > `status=pending`; its `GET /v1/me/courses` then showed a
+  > `group='pending'` "Period 6 — Physics Lab" item; an unknown code →
+  > 404; the teacher's approve endpoint → 200; the student's
+  > `GET /v1/me/courses` then showed the class's teacher course
+  > (`group='teacher'`, no pending item); membership removed afterward.
+  > **Browser** (signed in as a real student): the "From your teacher"
+  > section showed the "Join a class" button + the pending "Awaiting
+  > approval" card; the modal opened, an invalid code surfaced the
+  > friendly error, a valid code showed the "request sent" panel; with
+  > the membership flipped to `active` the dashboard showed the teacher
+  > course card in place of the pending card. No console errors. No
+  > migration. Next: 4.3.
 
 ### [ ] 4.3 — Classroom slide + annotation rendering
 - **Why:** teacher lessons show the real slide as a backdrop with Aria's

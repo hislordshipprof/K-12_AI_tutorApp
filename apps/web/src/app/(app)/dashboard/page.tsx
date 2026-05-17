@@ -7,22 +7,25 @@ import { useEffect, useState } from 'react';
 import { Icon } from '@/components/aria/icon';
 import { CourseCard } from '@/components/aria/course-card';
 import { CurriculumUnit } from '@/components/dashboard/curriculum-unit';
+import { JoinClassModal } from '@/components/dashboard/join-class-modal';
 import { StreakCard } from '@/components/dashboard/streak-card';
 import { TodayRow } from '@/components/dashboard/today-row';
 import { displayName, useMe } from '@/hooks/use-me';
 import { api, resolveClassroomTopicPath } from '@/lib/api';
 
 // Shape returned by GET /v1/me/courses — the dashboard course list, each
-// item tagged `group` ('recommended' | 'teacher').
+// item tagged `group` ('recommended' | 'teacher' | 'pending'). A 'pending'
+// item is a class the student has asked to join but the teacher has not
+// yet approved — its `id` is the class id and `title` the class name.
 interface MyCourseRow {
   id: string;
-  slug: string;
+  slug: string | null;
   title: string;
   exam: string | null;
   subject: string | null;
   color_gradient: string | null;
   icon_emoji: string | null;
-  group: 'recommended' | 'teacher';
+  group: 'recommended' | 'teacher' | 'pending';
   published_topic_count: number | null;
 }
 
@@ -34,7 +37,7 @@ interface CourseDto {
   pct: number | null;     // null when we don't know yet — render as "—"
   icon: string;
   color: string;
-  group: 'recommended' | 'teacher';
+  group: 'recommended' | 'teacher' | 'pending';
   /** A teacher course with no published topic yet — shown, not enterable. */
   comingSoon: boolean;
   active?: boolean;
@@ -80,6 +83,7 @@ const ONBOARDING_KEY = 'edumind.onboarding';
 export default function DashboardPage() {
   const router = useRouter();
   const [openUnit, setOpenUnit] = useState<string | null>('u4');
+  const [joinOpen, setJoinOpen] = useState(false);
 
   // Active course = clicked card OR onboarding's primary OR first course.
   // Initialised lazily from localStorage so a returning user sees their
@@ -110,7 +114,7 @@ export default function DashboardPage() {
       return remote.map(
         (c): CourseDto => ({
           id: c.id,
-          slug: c.slug,
+          slug: c.slug ?? '',
           name: c.title,
           meta:
             c.group === 'teacher'
@@ -144,6 +148,7 @@ export default function DashboardPage() {
     (c) => c.group === 'recommended',
   );
   const teacherCards = coursesWithActive.filter((c) => c.group === 'teacher');
+  const pendingCards = coursesWithActive.filter((c) => c.group === 'pending');
   const { data: units = [] } = useQuery<UnitRow[]>({
     queryKey: ['course-units', activeSlug],
     queryFn: async () => {
@@ -361,36 +366,51 @@ export default function DashboardPage() {
         </div>
 
         {/* FROM YOUR TEACHER */}
-        {teacherCards.length > 0 && (
-          <>
-            <SectHd
-              title="From your teacher"
-              sub="Courses your teacher published to a class you joined"
-            />
-            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-              {teacherCards.map((c) => (
-                <CourseCard
-                  key={c.id}
-                  name={c.name}
-                  meta={c.meta}
-                  pct={c.pct}
-                  icon={c.icon}
-                  color={c.color}
-                  active={c.active}
-                  tag={c.comingSoon ? 'Coming soon' : 'Course'}
-                  onClick={() => {
-                    // A course with no published topic yet isn't enterable.
-                    if (c.comingSoon) return;
-                    if (!c.active) {
-                      setActiveSlugState(c.slug);
-                      return;
-                    }
-                    goClassroom();
-                  }}
-                />
-              ))}
-            </div>
-          </>
+        <SectHd
+          title="From your teacher"
+          sub="Courses your teacher published to a class you joined"
+          action={
+            <button
+              type="button"
+              onClick={() => setJoinOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3.5 py-2 text-[13px] font-semibold text-indigo shadow-sm transition-colors hover:bg-indigo-soft"
+            >
+              <Icon name="plus" size={14} /> Join a class
+            </button>
+          }
+        />
+        {teacherCards.length === 0 && pendingCards.length === 0 ? (
+          <div className="rounded-[18px] border border-dashed border-border-2 bg-paper-2/50 px-5 py-8 text-center text-sm text-ink-3">
+            You haven&apos;t joined a class yet. Enter the code your teacher
+            gave you to get started.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+            {pendingCards.map((c) => (
+              <PendingClassCard key={c.id} name={c.name} />
+            ))}
+            {teacherCards.map((c) => (
+              <CourseCard
+                key={c.id}
+                name={c.name}
+                meta={c.meta}
+                pct={c.pct}
+                icon={c.icon}
+                color={c.color}
+                active={c.active}
+                tag={c.comingSoon ? 'Coming soon' : 'Course'}
+                onClick={() => {
+                  // A course with no published topic yet isn't enterable.
+                  if (c.comingSoon) return;
+                  if (!c.active) {
+                    setActiveSlugState(c.slug);
+                    return;
+                  }
+                  goClassroom();
+                }}
+              />
+            ))}
+          </div>
         )}
 
         {/* CURRICULUM */}
@@ -480,6 +500,8 @@ export default function DashboardPage() {
           <StreakCard days={me?.streak_days ?? 0} />
         </div>
       </div>
+
+      <JoinClassModal open={joinOpen} onClose={() => setJoinOpen(false)} />
     </div>
   );
 }
@@ -506,7 +528,7 @@ function SectHd({
 }: {
   title: string;
   sub?: React.ReactNode;
-  action?: string;
+  action?: React.ReactNode;
 }) {
   return (
     <div className="mb-[18px] mt-12 flex flex-wrap items-end justify-between gap-4 first:mt-0">
@@ -516,11 +538,34 @@ function SectHd({
         </div>
         {sub && <div className="text-[13px] text-ink-3">{sub}</div>}
       </div>
-      {action && (
-        <div className="cursor-pointer text-[13px] font-semibold text-indigo">
-          {action}
-        </div>
-      )}
+      {action}
+    </div>
+  );
+}
+
+/**
+ * A class the student has asked to join but the teacher has not yet
+ * approved (`group='pending'`). Rendered as a muted, non-enterable card —
+ * its courses appear only once the teacher approves the join (task 4.2).
+ */
+function PendingClassCard({ name }: { name: string }) {
+  return (
+    <div className="flex flex-col rounded-[18px] border border-dashed border-border-2 bg-paper-2/50 p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="grid h-9 w-9 place-items-center rounded-xl bg-indigo-soft text-indigo">
+          <Icon name="users" size={16} />
+        </span>
+        <span className="rounded-md bg-amber-soft px-2 py-[3px] text-[10px] font-bold uppercase tracking-[0.1em] text-[#8A6800]">
+          Awaiting approval
+        </span>
+      </div>
+      <div className="font-display text-[17px] font-bold tracking-[-0.015em]">
+        {name}
+      </div>
+      <div className="mt-0.5 text-xs text-ink-3">
+        Waiting for your teacher to approve your request — the class&apos;s
+        courses appear once they do.
+      </div>
     </div>
   );
 }
