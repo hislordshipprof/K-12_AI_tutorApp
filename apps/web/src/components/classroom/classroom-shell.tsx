@@ -1,5 +1,6 @@
 'use client';
 
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -61,6 +62,13 @@ interface LessonStep {
    * generic text chalkboard. `type` is a key in the scene registry.
    */
   scene?: { type: string; params: Record<string, unknown> } | null;
+  /**
+   * `topic_pages` row id — set on a step a teacher lesson teaches over
+   * a real slide. The whiteboard renders that slide as the backdrop
+   * (`teacher-authoring.md` §7); steps with no `page` fall back to the
+   * chalkboard.
+   */
+  page?: string | null;
 }
 
 // Placeholder shown when a real topic has no generated `content` yet (the
@@ -102,6 +110,7 @@ export interface ClassroomTopic {
     html: string;
     dur: string;
     scene?: { type: string; params: Record<string, unknown> } | null;
+    page?: string | null;
   }> | null;
 }
 
@@ -132,6 +141,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
         tts: s.tts,
         dur: s.dur,
         scene: s.scene ?? null,
+        page: s.page ?? null,
       }));
     }
     return LESSON_STEPS;
@@ -195,6 +205,22 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
   const [quizMeOpen, setQuizMeOpen] = useState(false);
 
   const total = lessonSteps.length - 1;
+
+  // Slide backdrop for teacher lessons — a step with a `page` is taught
+  // over a real slide image. The API mints a short-lived signed URL for
+  // the private `lesson-materials` object; chalkboard steps have no
+  // `page` and skip the fetch (`teacher-authoring.md` §7).
+  const currentPage = lessonSteps[step]?.page ?? null;
+  const slideQuery = useQuery({
+    queryKey: ['topic-slide', topic.slug, currentPage],
+    queryFn: () =>
+      api<{ url: string }>(`/v1/topics/${topic.slug}/slide/${currentPage}`),
+    enabled: Boolean(currentPage),
+    staleTime: 30 * 60_000,
+    retry: false,
+  });
+  const slideUrl = currentPage ? slideQuery.data?.url ?? null : null;
+
   const tts = useTtsPlayback({ muted, rate: 1 });
   const { speaking } = tts;
   /** Bookmark snapshot taken whenever an overlay interrupts playback. */
@@ -448,6 +474,7 @@ export function ClassroomShell({ topic }: ClassroomShellProps) {
             topicTitle={topic.title}
             revealProgress={captionProgress}
             scene={lessonSteps[step]?.scene ?? null}
+            slideUrl={slideUrl}
           />
         </div>
 

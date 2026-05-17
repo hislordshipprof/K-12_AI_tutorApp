@@ -38,6 +38,13 @@ interface WhiteboardSVGProps {
    * chalkboard — the scene draws itself in sync with `revealProgress`.
    */
   scene?: { type: string; params: Record<string, unknown> } | null;
+  /**
+   * Signed URL of the teacher slide this step is taught over
+   * (`teacher-authoring.md` §7). When set it is drawn as the board
+   * backdrop and the scene SVG (if any) annotates on top; the text
+   * chalkboard is suppressed. Steps with no slide keep the chalkboard.
+   */
+  slideUrl?: string | null;
 }
 
 const WAVE_D =
@@ -81,6 +88,7 @@ export function WhiteboardSVG({
   topicTitle,
   revealProgress = 1,
   scene = null,
+  slideUrl = null,
 }: WhiteboardSVGProps) {
   // A step-level scene wins over the text chalkboard / waves scene.
   const SceneComponent = scene ? getScene(scene.type) : null;
@@ -117,6 +125,20 @@ export function WhiteboardSVG({
         </filter>
       </defs>
 
+      {/* Teacher slide backdrop — drawn first so the scene SVG annotates
+          on top of it. `meet` keeps the slide's aspect ratio; any
+          letterbox falls back to the dark board behind the <svg>. */}
+      {slideUrl ? (
+        <image
+          href={slideUrl}
+          x="0"
+          y="0"
+          width="900"
+          height="530"
+          preserveAspectRatio="xMidYMid meet"
+        />
+      ) : null}
+
       {SceneComponent && scene ? (
         <g>
           {/* Topic watermark + step counter stay so the board feels
@@ -148,7 +170,7 @@ export function WhiteboardSVG({
           </text>
           <SceneComponent progress={revealProgress} params={scene.params} />
         </g>
-      ) : kind === 'generic' ? (
+      ) : slideUrl ? null : kind === 'generic' ? (
         <GenericChalkboard
           step={step}
           stepHtml={stepHtml}

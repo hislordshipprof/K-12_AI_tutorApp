@@ -36,6 +36,68 @@ def _user_uuid(user: dict[str, Any]) -> UUID:
     return uuid4()
 
 
+def _ensure_teacher_enrollment(
+    supabase: Any, user_id: str, topic_id: str
+) -> None:
+    """Lazily enrol the student in a teacher course on first classroom open.
+
+    `teacher-authoring.md` §4: the first time a student opens a teacher
+    course we insert an `enrollments` row so the existing dashboard /
+    progress / history queries work unchanged. Enrollment is NOT
+    authorization (RLS still gates access via `class_members`), so this
+    is best-effort — it never blocks or fails the session. Recommended
+    courses are left alone (they self-enrol elsewhere).
+    """
+    try:
+        t = (
+            supabase.table("topics")
+            .select("unit_id")
+            .eq("id", topic_id)
+            .limit(1)
+            .execute()
+        )
+        t_rows = getattr(t, "data", None) or []
+        if not t_rows or not t_rows[0].get("unit_id"):
+            return
+        u = (
+            supabase.table("units")
+            .select("course_id")
+            .eq("id", t_rows[0]["unit_id"])
+            .limit(1)
+            .execute()
+        )
+        u_rows = getattr(u, "data", None) or []
+        if not u_rows or not u_rows[0].get("course_id"):
+            return
+        course_id = str(u_rows[0]["course_id"])
+        c = (
+            supabase.table("courses")
+            .select("origin")
+            .eq("id", course_id)
+            .limit(1)
+            .execute()
+        )
+        c_rows = getattr(c, "data", None) or []
+        if not c_rows or c_rows[0].get("origin") != "teacher":
+            return
+        existing = (
+            supabase.table("enrollments")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("course_id", course_id)
+            .limit(1)
+            .execute()
+        )
+        if getattr(existing, "data", None):
+            return
+        supabase.table("enrollments").insert(
+            {"user_id": user_id, "course_id": course_id}
+        ).execute()
+        log.info("teacher_enrollment_created", user=user_id, course=course_id)
+    except Exception as e:  # noqa: BLE001
+        log.warning("teacher_enrollment_failed", error=str(e), topic=topic_id)
+
+
 @router.post(
     "/sessions",
     response_model=SessionOut,
@@ -65,6 +127,11 @@ async def start_session(
             )
             rows = getattr(resp, "data", None) or []
             if rows:
+                # First open of a teacher course → lazily create the
+                # `enrollments` row (best-effort; never blocks the session).
+                _ensure_teacher_enrollment(
+                    supabase, str(user_id), str(body.topic_id)
+                )
                 return rows[0]
             raise RuntimeError("insert returned no rows")
         except Exception as e:  # noqa: BLE001

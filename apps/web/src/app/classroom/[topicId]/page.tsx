@@ -14,7 +14,14 @@ interface TopicDetails {
   unit_name: string;
   course_slug: string | null;
   has_content: boolean;
-  content: Array<{ tts: string; html: string; dur: string }> | null;
+  content: Array<{
+    tts: string;
+    html: string;
+    dur: string;
+    scene?: { type: string; params: Record<string, unknown> } | null;
+    /** `topic_pages` row id — set on a step taught over a teacher slide. */
+    page?: string | null;
+  }> | null;
 }
 
 /**

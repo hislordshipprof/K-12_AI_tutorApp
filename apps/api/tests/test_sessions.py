@@ -71,8 +71,10 @@ def test_start_session_inserts_into_supabase(
     body = r.json()
     assert body["id"] == "55555555-5555-5555-5555-555555555555"
 
-    # Verify table + payload.
-    sb.table.assert_called_with("lesson_sessions")
+    # Verify table + payload. `assert_any_call` (not `assert_called_with`)
+    # because session start now also touches topics/units/courses to
+    # lazily enrol the student in a teacher course (task 4.3).
+    sb.table.assert_any_call("lesson_sessions")
     insert_payload = sb._table.insert.call_args.args[0]
     assert insert_payload["user_id"] == dev_headers["X-Dev-User-Id"]
     assert insert_payload["topic_id"] == "11111111-1111-1111-1111-111111111111"

@@ -42,7 +42,7 @@ work that can proceed alongside Phase 0.
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
 | 3 — Admin board | 3.1–3.6 | 6/6 — COMPLETE (scaffold · class mgmt · course/unit + upload · segmentation + confirm · topic generate/publish · assign courses to classes) |
-| 4 — Student side | 4.1–4.3 | 2/3 — 4.1 (dashboard split) · 4.2 (join-a-class) done |
+| 4 — Student side | 4.1–4.3 | 3/3 — COMPLETE (dashboard split · join-a-class · classroom slide + annotation) |
 | 5 — Polish | 5.1–5.3 | 0/3 |
 
 ---
@@ -1206,7 +1206,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   > course card in place of the pending card. No console errors. No
   > migration. Next: 4.3.
 
-### [ ] 4.3 — Classroom slide + annotation rendering
+### [x] 4.3 — Classroom slide + annotation rendering
 - **Why:** teacher lessons show the real slide as a backdrop with Aria's
   annotations on top.
 - **Build:** `GET /v1/topics/{id}/slide/{topic_page_id}` (signed URL,
@@ -1218,7 +1218,39 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   created on first open.
 - **Verify:** `pnpm verify`; play a teacher lesson as a student.
 - **Depends on:** 4.2, 3.5.
-- **Status:** not started
+- **Status:** done (2026-05-16).
+  API: new `GET /v1/topics/{topic_id}/slide/{topic_page_id}`
+  (`app/api/v1/courses.py`) — mints a short-lived (1 h) signed URL for
+  the slide PNG in the private `lesson-materials` bucket. Gated: the
+  caller must own the course, be an admin, or be an `active` member of
+  a class the course is assigned to — anyone else, and any missing row,
+  gets 404. `start_session` (`app/api/v1/sessions.py`) gained
+  `_ensure_teacher_enrollment` — the first open of a teacher-course
+  topic lazily inserts an `enrollments` row (best-effort; Recommended
+  courses untouched; idempotent).
+  Web: a lesson step's optional `page` (a `topic_pages` id) is plumbed
+  through `classroom/[topicId]/page.tsx` → `ClassroomShell` →
+  `WhiteboardSVG`. For a step with a `page` the shell fetches the
+  signed URL and `WhiteboardSVG` draws it as an `<image>` backdrop
+  filling the board, with the scene SVG annotating on top; steps with
+  no `page` keep the existing chalkboard.
+  Tests: new `test_topic_slide.py` (5 — member / owner / admin allowed,
+  non-member + topic-page-mismatch 404) and `test_session_enrollment.py`
+  (3 — enrols a teacher course, skips Recommended, idempotent);
+  `test_sessions.py` updated (`assert_any_call`, since session start now
+  also touches topics/units/courses). Full API suite 412→420 passed.
+  >
+  > **Verified.** `pnpm verify` → typecheck/lint/build green, phases 1–2
+  > all pass. `pnpm api:test` → 420 passed, 10 skipped. **Live on the
+  > cloud DB**: as an `active` member the slide endpoint returned a
+  > signed URL that resolved to a real 240 KB `image/png`; a non-member
+  > got 404; a session-start `POST /v1/sessions` for the teacher-course
+  > topic created the `enrollments` row. **Browser** (signed in as the
+  > enrolled student): the published Fluids topic "States of Matter &
+  > Fluids" played with the teacher's real deck slides as the board
+  > backdrop (`.cr-board <image>` present); a Recommended topic rendered
+  > the dark chalkboard with no slide (`<image>` absent) — the fallback.
+  > No console errors. No migration. Phase 4 COMPLETE.
 
 ---
 

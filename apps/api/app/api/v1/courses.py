@@ -13,6 +13,7 @@ from uuid import UUID, NAMESPACE_URL, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.security import get_current_user
 from app.core.supabase import get_supabase, supabase_enabled
@@ -225,6 +226,176 @@ async def get_topic(
     except Exception as e:  # noqa: BLE001
         log.warning("topic_details_supabase_failed", error=str(e), topic=topic_id)
         return fallback
+
+
+@router.get("/topics/{topic_id}/slide/{topic_page_id}")
+async def get_topic_slide(
+    topic_id: str,
+    topic_page_id: str,
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Short-lived signed URL for one of a topic's slide images.
+
+    The classroom renders a teacher lesson's slide as the backdrop for
+    steps that carry a `page` (`teacher-authoring.md` §7). Slide images
+    live in the private `lesson-materials` bucket — students never get
+    bucket access — so the classroom asks here and the API mints a
+    signed URL.
+
+    Access (`teacher-authoring.md` §10): the caller must be an `active`
+    member of a class the topic's course is assigned to, OR own the
+    course (a teacher previewing their lesson), OR be an admin. Anyone
+    else — and any missing row — gets 404, so a non-member learns
+    nothing about the slide.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="slide not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    not_found = HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail="slide not found"
+    )
+
+    try:
+        # 1. topic_pages row — must exist AND belong to {topic_id}.
+        tp_resp = (
+            supabase.table("topic_pages")
+            .select("topic_id,material_id,page_idx")
+            .eq("id", topic_page_id)
+            .limit(1)
+            .execute()
+        )
+        tp_rows = getattr(tp_resp, "data", None) or []
+        if not tp_rows or str(tp_rows[0].get("topic_id")) != str(topic_id):
+            raise not_found
+        tp = tp_rows[0]
+
+        # 2. topic -> unit -> course (id + owner).
+        t_resp = (
+            supabase.table("topics")
+            .select("unit_id")
+            .eq("id", topic_id)
+            .limit(1)
+            .execute()
+        )
+        t_rows = getattr(t_resp, "data", None) or []
+        if not t_rows:
+            raise not_found
+        u_resp = (
+            supabase.table("units")
+            .select("course_id")
+            .eq("id", t_rows[0]["unit_id"])
+            .limit(1)
+            .execute()
+        )
+        u_rows = getattr(u_resp, "data", None) or []
+        if not u_rows:
+            raise not_found
+        course_id = str(u_rows[0]["course_id"])
+        c_resp = (
+            supabase.table("courses")
+            .select("owner_id")
+            .eq("id", course_id)
+            .limit(1)
+            .execute()
+        )
+        c_rows = getattr(c_resp, "data", None) or []
+        owner_id = str(c_rows[0]["owner_id"]) if c_rows and c_rows[0].get(
+            "owner_id"
+        ) else ""
+
+        # 3. Access gate — owner, admin, or active member of an assigned class.
+        allowed = bool(caller_id) and caller_id == owner_id
+        if not allowed:
+            role_resp = (
+                supabase.table("profiles")
+                .select("role")
+                .eq("id", caller_id)
+                .limit(1)
+                .execute()
+            )
+            role_rows = getattr(role_resp, "data", None) or []
+            if role_rows and role_rows[0].get("role") == "admin":
+                allowed = True
+        if not allowed:
+            cc_resp = (
+                supabase.table("class_courses")
+                .select("class_id")
+                .eq("course_id", course_id)
+                .execute()
+            )
+            class_ids = [
+                str(r["class_id"])
+                for r in (getattr(cc_resp, "data", None) or [])
+                if r.get("class_id")
+            ]
+            if class_ids:
+                m_resp = (
+                    supabase.table("class_members")
+                    .select("class_id")
+                    .eq("student_id", caller_id)
+                    .eq("status", "active")
+                    .in_("class_id", class_ids)
+                    .execute()
+                )
+                if getattr(m_resp, "data", None):
+                    allowed = True
+        if not allowed:
+            raise not_found
+
+        # 4. material_pages image -> signed URL.
+        mp_resp = (
+            supabase.table("material_pages")
+            .select("image_path")
+            .eq("material_id", tp["material_id"])
+            .eq("idx", tp["page_idx"])
+            .limit(1)
+            .execute()
+        )
+        mp_rows = getattr(mp_resp, "data", None) or []
+        image_path = mp_rows[0].get("image_path") if mp_rows else None
+        if not image_path:
+            raise not_found
+
+        signed = supabase.storage.from_("lesson-materials").create_signed_url(
+            image_path, 3600
+        )
+        url = (
+            (
+                signed.get("signedURL")
+                or signed.get("signedUrl")
+                or signed.get("signed_url")
+            )
+            if isinstance(signed, dict)
+            else None
+        )
+        if not url:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="could not sign slide url",
+            )
+        if not str(url).startswith("http"):
+            base = (settings.supabase_url or "").rstrip("/")
+            path = str(url) if str(url).startswith("/") else f"/{url}"
+            url = (
+                f"{base}/storage/v1{path}"
+                if path.startswith("/object")
+                else f"{base}{path}"
+            )
+        return {"url": url}
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "topic_slide_failed", error=str(e), topic=topic_id, page=topic_page_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="slide lookup failed",
+        ) from e
 
 
 # ─── Curriculum tree ──────────────────────────────────────────────────────
