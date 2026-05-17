@@ -380,6 +380,12 @@ class ClassCreate(BaseModel):
     subject: str | None = None
 
 
+class ClassCourseAssign(BaseModel):
+    """Request body for `POST /v1/teacher/classes/{class_id}/courses`."""
+
+    course_id: UUID
+
+
 class CourseCreate(BaseModel):
     """Request body for `POST /v1/teacher/courses`."""
 
@@ -2071,3 +2077,109 @@ async def publish_topic(
         ) from e
 
     return {"id": str(topic_id), "status": "published"}
+
+
+# ─── class ↔ course assignment (`/teach/classes/[id]`, `teacher-authoring.md`
+# §5/§9/§10) ──────────────────────────────────────────────────────────────────
+@router.post("/classes/{class_id}/courses", status_code=status.HTTP_201_CREATED)
+async def assign_class_course(
+    class_id: UUID,
+    body: ClassCourseAssign,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Assign one of the caller's courses to one of their classes (`§5`/`§10`).
+
+    Teacher/admin-gated. BOTH the class and the course must be owned by the
+    caller (or caller is admin) — `_load_owned_class` / `_load_owned_course`
+    each 404 a missing or non-owned resource. Inserts a `class_courses` row;
+    idempotent — re-assigning an already-assigned course is a no-op. The
+    `class_courses` link is what makes a teacher course visible to the
+    class's students (`GET /v1/me/courses`, task 4.1).
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="class not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_class(supabase, str(class_id), caller_id)
+    course = _load_owned_course(supabase, str(body.course_id), caller_id)
+
+    try:
+        existing = (
+            supabase.table("class_courses")
+            .select("class_id,course_id")
+            .eq("class_id", str(class_id))
+            .eq("course_id", str(body.course_id))
+            .limit(1)
+            .execute()
+        )
+        if not (getattr(existing, "data", None) or []):
+            supabase.table("class_courses").insert(
+                {
+                    "class_id": str(class_id),
+                    "course_id": str(body.course_id),
+                    "assigned_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ).execute()
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "class_course_assign_failed",
+            error=str(e),
+            class_id=str(class_id),
+            course_id=str(body.course_id),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="course assign failed",
+        ) from e
+
+    return {"id": str(course["id"]), "title": course.get("title")}
+
+
+@router.delete(
+    "/classes/{class_id}/courses/{course_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def unassign_class_course(
+    class_id: UUID,
+    course_id: UUID,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> None:
+    """Remove a course assignment from a class (`§9`/`§10`).
+
+    Teacher/admin-gated; the class must be owned by the caller (or caller is
+    admin) else 404. Deletes the `class_courses` row keyed
+    (class_id, course_id) — the class's students stop seeing that course.
+    Returns HTTP 204.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="class not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_class(supabase, str(class_id), caller_id)
+
+    try:
+        (
+            supabase.table("class_courses")
+            .delete()
+            .eq("class_id", str(class_id))
+            .eq("course_id", str(course_id))
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "class_course_unassign_failed",
+            error=str(e),
+            class_id=str(class_id),
+            course_id=str(course_id),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="course unassign failed",
+        ) from e
+    return None

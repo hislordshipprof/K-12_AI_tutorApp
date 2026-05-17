@@ -41,7 +41,7 @@ work that can proceed alongside Phase 0.
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
-| 3 — Admin board | 3.1–3.5 | 5/5 — COMPLETE (scaffold + role gate · class management · course/unit + material upload · segmentation + confirm-breakdown · topic generate/review/version/publish) |
+| 3 — Admin board | 3.1–3.6 | 6/6 — COMPLETE (scaffold · class mgmt · course/unit + upload · segmentation + confirm · topic generate/publish · assign courses to classes) |
 | 4 — Student side | 4.1–4.3 | 1/3 — 4.1 (dashboard split) done |
 | 5 — Polish | 5.1–5.3 | 0/3 |
 
@@ -1052,7 +1052,48 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   > PUBLISHED pill, the validation banner, 10 editable steps, the version
   > list (v1 Live / v2), the "Published" bar and the "Preview as student"
   > → `/classroom/{id}` link; the unit page's Topics section listed all
-  > 7 topics with the published one marked. Phase 3 COMPLETE.
+  > 7 topics with the published one marked.
+
+### [x] 3.6 — Assign courses to classes
+- **Why:** `class_courses` — the link that makes a teacher course
+  visible to a class's students — had no writer. Phase 4 (the student
+  dashboard, the classroom) READS it, but no teacher endpoint or UI
+  ever created a row. Without this the teacher→student path is a dead
+  end. (Added 2026-05-16 — gap found during task 4.1; §5 step 10 ties
+  assignment to publishing but 3.2 / 3.5 did not build it.)
+- **Build:** teacher endpoints to assign / unassign one of the
+  teacher's courses to one of their classes (`POST` / `DELETE` on
+  `class_courses`, §10); the class page's "Assigned courses" section
+  becomes interactive — pick a course to assign, unassign an assigned
+  one.
+- **Acceptance criteria:** a teacher assigns one of their own courses
+  to their own class → a `class_courses` row is created and the course
+  appears in the class's "Assigned courses"; unassign removes it; a
+  teacher cannot assign a class or a course that is not their own.
+- **Verify:** `pnpm verify`; assign + unassign on the real DB; confirm
+  an enrolled student's `GET /v1/me/courses` then reflects it.
+- **Depends on:** 3.2, 3.5.
+- **Status:** done (2026-05-16).
+  API: two teacher/admin-gated endpoints on `app/api/v1/teacher.py` —
+  `POST /v1/teacher/classes/{class_id}/courses` (`{course_id}` →
+  201 `{id, title}`) and `DELETE /v1/teacher/classes/{class_id}/`
+  `courses/{course_id}` (→ 204). Both `_load_owned_class` the class and
+  (assign only) `_load_owned_course` the course, so a class or course
+  the caller does not own 404s. Assign is idempotent — an existing
+  `class_courses` row is not duplicated. `ClassCourseAssign` model added.
+  Web: `app/teach/classes/[id]/page.tsx` — the static "Assigned courses"
+  section became interactive: each assigned course has an unassign ×, and
+  a `<select>` of the teacher's not-yet-assigned courses + "Assign"
+  button creates the link (`assignMut` / `unassignMut`).
+  Tests: `tests/test_class_courses.py` — 7 tests (assign creates row,
+  idempotent, non-owned class 404, non-owned course 404, non-teacher 403,
+  unassign 204, unassign non-owned class 404). Full API suite 411 passed.
+  Verified each acceptance criterion: `pnpm verify` green; live on the
+  cloud DB — assigned `e2e-fluids-demo` to class `a41be5bc…` (201, row
+  created), re-POST stayed at one row (idempotent), the enrolled student's
+  `GET /v1/me/courses` then showed it under `group='teacher'`, `DELETE`
+  removed exactly that row (204) leaving the class's other assignment
+  untouched; non-owned class/course 404 covered by unit tests.
 
 ---
 

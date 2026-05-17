@@ -41,6 +41,12 @@ interface ClassDetail {
   courses: { id: string; title: string }[];
 }
 
+/** A teacher course as listed by `GET /v1/teacher/courses` — picker pool. */
+interface TeacherCourseLite {
+  id: string;
+  title: string;
+}
+
 const AVATAR_COLORS = ['#5B5BE5', '#FF7A59', '#34C97A', '#A78BFA', '#5FB7F4'];
 
 function initials(name: string): string {
@@ -106,6 +112,34 @@ export default function ClassDetailPage() {
   const removeMut = useMutation({
     mutationFn: (studentId: string) =>
       api(`/v1/teacher/classes/${classId}/members/${studentId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: invalidate,
+  });
+
+  // The teacher's courses — the pool the "Assign a course" picker draws from.
+  const { data: teacherCourses = [] } = useQuery<TeacherCourseLite[]>({
+    queryKey: ['teacher-courses'],
+    queryFn: () => api<TeacherCourseLite[]>('/v1/teacher/courses'),
+    staleTime: 30_000,
+  });
+  const [coursePick, setCoursePick] = useState('');
+
+  const assignMut = useMutation({
+    mutationFn: (courseId: string) =>
+      api(`/v1/teacher/classes/${classId}/courses`, {
+        method: 'POST',
+        json: { course_id: courseId },
+      }),
+    onSuccess: () => {
+      setCoursePick('');
+      invalidate();
+    },
+  });
+
+  const unassignMut = useMutation({
+    mutationFn: (courseId: string) =>
+      api(`/v1/teacher/classes/${classId}/courses/${courseId}`, {
         method: 'DELETE',
       }),
     onSuccess: invalidate,
@@ -261,24 +295,88 @@ export default function ClassDetailPage() {
 
         {/* ASSIGNED COURSES */}
         <section>
-          <SectHd title="Assigned courses" sub="Courses this class can see" />
-          {data.courses.length > 0 ? (
-            <div className="flex flex-wrap gap-2.5">
-              {data.courses.map((c) => (
-                <div
-                  key={c.id}
-                  className="rounded-xl border border-border bg-white px-4 py-2.5 text-sm font-semibold text-ink shadow-sm"
-                >
-                  {c.title}
+          <SectHd
+            title="Assigned courses"
+            sub="Courses this class's students can see on their dashboard"
+          />
+          {(() => {
+            const assignable = teacherCourses.filter(
+              (tc) => !data.courses.some((ac) => ac.id === tc.id),
+            );
+            return (
+              <div className="overflow-hidden rounded-[20px] border border-border bg-white shadow-sm">
+                {data.courses.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center gap-3 border-b border-border px-5 py-3.5 last:border-b-0"
+                  >
+                    <div className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl bg-paper-2 text-ink-3">
+                      <Icon name="course" size={18} />
+                    </div>
+                    <div className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
+                      {c.title}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => unassignMut.mutate(c.id)}
+                      disabled={unassignMut.isPending}
+                      aria-label={`Unassign ${c.title}`}
+                      className="grid h-8 w-8 place-items-center rounded-lg text-ink-3 transition-colors hover:bg-coral-soft hover:text-coral disabled:opacity-40"
+                    >
+                      <Icon name="close" size={14} />
+                    </button>
+                  </div>
+                ))}
+                {data.courses.length === 0 && (
+                  <div className="px-5 py-4 text-[13px] text-ink-3">
+                    No courses assigned yet.
+                  </div>
+                )}
+
+                {/* assign control */}
+                <div className="border-t border-border bg-paper-2/50 px-5 py-3">
+                  {assignable.length > 0 ? (
+                    <form
+                      className="flex items-center gap-2.5"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (coursePick && !assignMut.isPending) {
+                          assignMut.mutate(coursePick);
+                        }
+                      }}
+                    >
+                      <select
+                        value={coursePick}
+                        onChange={(e) => setCoursePick(e.target.value)}
+                        aria-label="Course to assign"
+                        className="min-w-0 flex-1 rounded-lg border border-border-2 bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-indigo"
+                      >
+                        <option value="">Assign a course…</option>
+                        {assignable.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.title}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="submit"
+                        disabled={!coursePick || assignMut.isPending}
+                        className="rounded-lg bg-indigo px-3.5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-indigo-deep disabled:opacity-40"
+                      >
+                        {assignMut.isPending ? 'Assigning…' : 'Assign'}
+                      </button>
+                    </form>
+                  ) : (
+                    <span className="text-[13px] text-ink-3">
+                      {teacherCourses.length === 0
+                        ? 'Create a course first, then assign it to this class.'
+                        : 'All your courses are assigned to this class.'}
+                    </span>
+                  )}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyRow
-              icon="course"
-              text="No courses assigned yet — you assign a course to a class when you publish it."
-            />
-          )}
+              </div>
+            );
+          })()}
         </section>
       </div>
     </div>
