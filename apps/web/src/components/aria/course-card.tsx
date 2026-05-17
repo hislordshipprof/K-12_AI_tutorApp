@@ -17,6 +17,11 @@ export interface CourseCardProps {
   onClick?: () => void;
   /** Optional pill label shown at bottom-left of the header. */
   tag?: string;
+  /**
+   * Optional generated cover image (task 5.2). When set it fills the
+   * header band instead of the flat `color` gradient.
+   */
+  cover?: string | null;
 }
 
 /**
@@ -35,6 +40,7 @@ export function CourseCard({
   active = false,
   onClick,
   tag = 'AP Course',
+  cover = null,
 }: CourseCardProps) {
   const hasPct = typeof pct === 'number';
   const clampedPct = hasPct ? Math.max(0, Math.min(100, pct!)) : 0;
@@ -50,8 +56,12 @@ export function CourseCard({
       )}
     >
       <div
-        className="relative flex h-[100px] items-end p-4"
-        style={{ background: color }}
+        className="relative flex h-[100px] items-end bg-cover bg-center p-4"
+        style={
+          cover
+            ? { backgroundImage: `url(${cover})` }
+            : { background: color }
+        }
       >
         <div className="absolute right-3.5 top-3.5 grid h-[42px] w-[42px] place-items-center rounded-xl border border-white/20 bg-white/[0.18] text-[22px] backdrop-blur-md">
           {icon}

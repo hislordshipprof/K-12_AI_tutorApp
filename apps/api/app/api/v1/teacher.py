@@ -49,6 +49,7 @@ from app.pipeline.jobs import run_job
 from app.pipeline.render import render_topic
 from app.pipeline.segment import ProposedTopic, segment_unit
 from app.pipeline.validate import generate_and_validate
+from app.services.course_cover import generate_course_cover
 
 router = APIRouter(prefix="/teacher", tags=["teacher"])
 log = get_logger(__name__)
@@ -2134,6 +2135,7 @@ async def update_topic_version_label(
 @router.post("/topics/{topic_id}/publish")
 async def publish_topic(
     topic_id: UUID,
+    background: BackgroundTasks,
     user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
 ) -> dict[str, Any]:
     """Publish a topic — the §6 publish gate (`teacher-authoring.md` §6).
@@ -2143,6 +2145,11 @@ async def publish_topic(
     version has validated: the topic must have an `active_version_id` (else
     400) and that version's `validation` must be a dict with `passed is True`
     (else 400). When the gate passes, `topics.status` is set to `published`.
+
+    On a successful publish a background task generates the course's cover
+    art if it has none yet (`model-strategy.md` §4, task 5.2) — best-effort
+    and one-shot, so a publish never waits on it and re-publishing never
+    regenerates it.
     """
     supabase = get_supabase()
     if supabase is None:
@@ -2151,7 +2158,7 @@ async def publish_topic(
         )
 
     caller_id = str(user.get("sub") or "")
-    topic, _unit, _course = _load_owned_topic(supabase, str(topic_id), caller_id)
+    topic, _unit, course = _load_owned_topic(supabase, str(topic_id), caller_id)
 
     active_version_id = topic.get("active_version_id")
     if not active_version_id:
@@ -2198,6 +2205,10 @@ async def publish_topic(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="topic publish failed",
         ) from e
+
+    # Course cover art (task 5.2) — fire-and-forget; `generate_course_cover`
+    # is one-shot (skips a course that already has a cover) and best-effort.
+    background.add_task(generate_course_cover, str(course["id"]))
 
     return {"id": str(topic_id), "status": "published"}
 

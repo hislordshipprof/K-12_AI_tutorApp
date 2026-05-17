@@ -97,6 +97,27 @@ def _coerce_json(text: str) -> dict[str, Any] | list[Any] | None:
         return None
 
 
+def _extract_image_bytes(response: Any) -> bytes | None:
+    """Pull the first inline image part's raw bytes out of a genai response.
+
+    Image models return the picture as an `inline_data` part on a candidate;
+    its `data` is raw bytes (new SDK) or base64 text (older shapes).
+    """
+    for cand in getattr(response, "candidates", None) or []:
+        content = getattr(cand, "content", None)
+        for part in getattr(content, "parts", None) or []:
+            inline = getattr(part, "inline_data", None)
+            if inline is None:
+                continue
+            mime = str(getattr(inline, "mime_type", "") or "")
+            data = getattr(inline, "data", None)
+            if data and mime.startswith("image/"):
+                if isinstance(data, str):
+                    return base64.b64decode(data)
+                return bytes(data)
+    return None
+
+
 # ── Service ───────────────────────────────────────────────────────────────────
 class GeminiService:
     """Thin async wrapper around `google.genai.Client`."""
@@ -232,6 +253,34 @@ class GeminiService:
 
         # tenacity always raises on exhaustion — this is just for type-checkers.
         raise RuntimeError("analyze_image: retry loop exhausted without yielding")
+
+    async def generate_image(
+        self,
+        prompt: str,
+        model: str | None = None,
+    ) -> bytes:
+        """Generate a single image with Nano Banana 2 — returns PNG/JPEG bytes.
+
+        Used for course cover art (`model-strategy.md` §4). Raises on failure;
+        callers treat cover generation as best-effort and swallow the error.
+        """
+        model_name = model or settings.gemini_model_image
+
+        async for attempt in _retry_policy():
+            with attempt:
+                response = await self.client.aio.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config={"response_modalities": ["TEXT", "IMAGE"]},
+                )
+                self._log_usage(response, op="generate_image")
+                data = _extract_image_bytes(response)
+                if data:
+                    return data
+                raise RuntimeError("generate_image: model returned no image part")
+
+        # tenacity always raises on exhaustion — this is just for type-checkers.
+        raise RuntimeError("generate_image: retry loop exhausted without yielding")
 
     async def generate_from_pdfs(
         self,

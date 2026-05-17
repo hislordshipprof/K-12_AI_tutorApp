@@ -28,6 +28,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.security import get_current_user
 from app.core.supabase import get_supabase, supabase_enabled
@@ -242,7 +243,14 @@ async def list_my_courses(
         return []
 
     caller_id = str(user.get("sub") or "")
-    cols = "id,slug,title,exam,subject,color_gradient,icon_emoji"
+    cols = "id,slug,title,exam,subject,color_gradient,icon_emoji,cover_image_path"
+
+    def _cover_url(path: str | None) -> str | None:
+        """Public URL of a course's generated cover (task 5.2), or None."""
+        if not path:
+            return None
+        base = (settings.supabase_url or "").rstrip("/")
+        return f"{base}/storage/v1/object/public/course-covers/{path}"
 
     def _item(c: dict[str, Any], group: str, pub: int | None) -> dict[str, Any]:
         return {
@@ -253,6 +261,7 @@ async def list_my_courses(
             "subject": c.get("subject"),
             "color_gradient": c.get("color_gradient"),
             "icon_emoji": c.get("icon_emoji"),
+            "cover_url": _cover_url(c.get("cover_image_path")),
             "group": group,
             "published_topic_count": pub,
         }
@@ -365,6 +374,7 @@ async def list_my_courses(
                         "subject": None,
                         "color_gradient": None,
                         "icon_emoji": None,
+                        "cover_url": None,
                         "group": "pending",
                         "published_topic_count": None,
                     }

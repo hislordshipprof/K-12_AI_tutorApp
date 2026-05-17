@@ -796,6 +796,30 @@ def test_publish_non_owned_topic_is_404(
     assert r.status_code == 404
 
 
+def test_publish_schedules_course_cover_generation(
+    client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A successful publish schedules the course's cover-art generation as a
+    background task (task 5.2)."""
+    cover_calls: list[str] = []
+    monkeypatch.setattr(
+        "app.api.v1.teacher.generate_course_cover",
+        lambda course_id: cover_calls.append(course_id),
+    )
+    sb = _make_supabase(
+        role="teacher",
+        courses=_owned_course(),
+        units=_unit(),
+        topics=_Table([_topic(active_version_id=V1_ID)]),
+        topic_versions=[_version(V1_ID, validation=_PASS_VALIDATION)],
+    )
+    _wire(monkeypatch, sb)
+
+    r = client.post(f"/v1/teacher/topics/{TOPIC_ID}/publish", headers=dev_headers)
+    assert r.status_code == 200
+    assert cover_calls == [COURSE_ID]
+
+
 # ═══ GET /v1/teacher/units/{id} — now carries topics ══════════════════════
 def test_get_unit_detail_includes_topics(
     client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch

@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     )
     segment_escalate_pages: int = Field(default=60, alias="SEGMENT_ESCALATE_PAGES")
     segment_chunk_pages: int = Field(default=200, alias="SEGMENT_CHUNK_PAGES")
+    # Course cover art — Nano Banana 2 (`model-strategy.md` §4): the
+    # high-volume / efficient image model, generated once per course at
+    # publish. Pinned (a generation path — `model-strategy.md` §8).
+    gemini_model_image: str = Field(
+        default="gemini-3.1-flash-image-preview", alias="GEMINI_MODEL_IMAGE"
+    )
 
     # ── Supabase ────────────────────────────────────────────────────────────
     supabase_url: str = Field(default="", alias="SUPABASE_URL")

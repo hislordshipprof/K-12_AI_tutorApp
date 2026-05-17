@@ -226,6 +226,29 @@ def test_my_courses_pending_and_active_memberships_coexist(
     assert by_group["pending"][0]["title"] == "Period 2 Chemistry"
 
 
+def test_my_courses_teacher_course_carries_cover_url(
+    client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A teacher course with a generated cover returns a public `cover_url`
+    pointing at the `course-covers` bucket (task 5.2)."""
+    tc = _course(TEACHER_COURSE, "fluids-x", "teacher", subject="Physics")
+    tc["cover_image_path"] = f"{TEACHER_COURSE}.png"
+    sb = _make_supabase(
+        courses=[tc],
+        class_members=[
+            {"class_id": CLASS_ID, "student_id": CALLER, "status": "active"}
+        ],
+        class_courses=[{"class_id": CLASS_ID, "course_id": TEACHER_COURSE}],
+    )
+    monkeypatch.setattr("app.api.v1.me.get_supabase", lambda: sb)
+
+    r = client.get("/v1/me/courses", headers=dev_headers)
+    assert r.status_code == 200
+    teacher = next(c for c in r.json() if c["group"] == "teacher")
+    assert "/storage/v1/object/public/course-covers/" in teacher["cover_url"]
+    assert teacher["cover_url"].endswith(f"/course-covers/{TEACHER_COURSE}.png")
+
+
 # ═══ GET /v1/courses — scoped to Recommended ══════════════════════════════
 def test_list_courses_excludes_teacher_courses(
     client: Any, monkeypatch: pytest.MonkeyPatch

@@ -25,6 +25,8 @@ interface MyCourseRow {
   subject: string | null;
   color_gradient: string | null;
   icon_emoji: string | null;
+  /** Generated cover image URL — set on a teacher course with a cover (5.2). */
+  cover_url: string | null;
   group: 'recommended' | 'teacher' | 'pending';
   published_topic_count: number | null;
 }
@@ -37,6 +39,8 @@ interface CourseDto {
   pct: number | null;     // null when we don't know yet — render as "—"
   icon: string;
   color: string;
+  /** Generated cover image URL (5.2) — falls back to `color` when null. */
+  cover: string | null;
   group: 'recommended' | 'teacher' | 'pending';
   /** A teacher course with no published topic yet — shown, not enterable. */
   comingSoon: boolean;
@@ -125,6 +129,7 @@ export default function DashboardPage() {
           pct: null,
           icon: c.icon_emoji ?? '📚',
           color: c.color_gradient ?? DEFAULT_COURSE_COLOR,
+          cover: c.cover_url ?? null,
           group: c.group,
           comingSoon:
             c.group === 'teacher' && (c.published_topic_count ?? 0) === 0,
@@ -397,6 +402,7 @@ export default function DashboardPage() {
                 pct={c.pct}
                 icon={c.icon}
                 color={c.color}
+                cover={c.cover}
                 active={c.active}
                 tag={c.comingSoon ? 'Coming soon' : 'Course'}
                 onClick={() => {

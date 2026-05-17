@@ -43,7 +43,7 @@ work that can proceed alongside Phase 0.
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
 | 3 — Admin board | 3.1–3.6 | 6/6 — COMPLETE (scaffold · class mgmt · course/unit + upload · segmentation + confirm · topic generate/publish · assign courses to classes) |
 | 4 — Student side | 4.1–4.3 | 3/3 — COMPLETE (dashboard split · join-a-class · classroom slide + annotation) |
-| 5 — Polish | 5.1–5.4 | 1/4 — 5.1 (version-management UX) done; 5.4 = re-segmentation mapping flow |
+| 5 — Polish | 5.1–5.4 | 2/4 — 5.1 (version UX) · 5.2 (course cover art) done; 5.4 = re-segmentation mapping flow |
 
 ---
 
@@ -1300,7 +1300,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   > version (confirmed on the cloud DB) and the list refetched with the
   > new name. No console errors. No migration. Next: 5.2.
 
-### [ ] 5.2 — Course cover art
+### [x] 5.2 — Course cover art
 - **Why:** teacher courses need visual identity on the dashboard.
 - **Build:** generate a course cover via Nano Banana 2
   (`model-strategy.md` §4) at publish; cache it.
@@ -1308,7 +1308,36 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   cover; generation is one-shot and cached.
 - **Verify:** `pnpm verify`.
 - **Depends on:** 4.1.
-- **Status:** not started
+- **Status:** done (2026-05-17).
+  Migration `20260517000000_course_covers.sql` — adds
+  `courses.cover_image_path` + a PUBLIC `course-covers` Storage bucket
+  (covers are cosmetic / non-sensitive, so a public bucket gives a
+  stable cacheable URL with no signing). API: `config.gemini_model_image`
+  pinned to `gemini-3.1-flash-image-preview`; `GeminiService.`
+  `generate_image()` (Nano Banana 2 → PNG bytes); a new
+  `app/services/course_cover.py` — `generate_course_cover()` is a
+  best-effort, one-shot background task (skips a course that already has
+  a cover) that prompts a flat subject illustration, uploads it to
+  `course-covers/{course_id}.png`, and records `cover_image_path`.
+  `publish_topic` schedules it via `BackgroundTasks` on every successful
+  publish (the one-shot guard makes re-publishing a no-op).
+  `GET /v1/me/courses` now returns a `cover_url` (public URL) per course.
+  Web: `CourseCard` gained a `cover` prop — when set it fills the header
+  band instead of the gradient; the dashboard passes it for teacher
+  courses.
+  Tests: new `test_course_cover.py` (3 — generate+record, one-shot skip,
+  no-supabase no-op), + `test_publish_schedules_course_cover_generation`
+  and `test_my_courses_teacher_course_carries_cover_url`. Suite 425→430.
+  >
+  > **Verified.** `pnpm verify` green; `pnpm api:test` → 430 passed.
+  > **Live on the cloud DB**: `generate_course_cover` for a teacher
+  > course made a real Nano Banana 2 call, uploaded a 478 KB PNG to the
+  > `course-covers` bucket and set `cover_image_path`; the public URL
+  > returned HTTP 200 `image/png`; a re-run skipped entirely (no model
+  > call — one-shot). **Browser** (enrolled student dashboard): the
+  > "From your teacher" course card's header rendered the generated
+  > cover (`background-image` = the public cover URL, which loaded 200).
+  > No console errors. Next: 5.3.
 
 ### [ ] 5.3 — Analytics
 - **Why:** teachers want to see how their class is doing.
