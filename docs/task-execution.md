@@ -42,7 +42,7 @@ work that can proceed alongside Phase 0.
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
 | 3 — Admin board | 3.1–3.5 | 5/5 — COMPLETE (scaffold + role gate · class management · course/unit + material upload · segmentation + confirm-breakdown · topic generate/review/version/publish) |
-| 4 — Student side | 4.1–4.3 | 0/3 |
+| 4 — Student side | 4.1–4.3 | 1/3 — 4.1 (dashboard split) done |
 | 5 — Polish | 5.1–5.3 | 0/3 |
 
 ---
@@ -1061,7 +1061,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
 > Section 4 is the student-facing surface for teacher content.
 > (`teacher-authoring.md` §7, §8.)
 
-### [ ] 4.1 — Dashboard split
+### [x] 4.1 — Dashboard split
 - **Why:** students must see Recommended vs From-your-teacher courses.
 - **Build:** the dashboard course list split into the two groups;
   teacher group resolved via `class_members → class_courses`; the
@@ -1071,7 +1071,47 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   "coming soon".
 - **Verify:** `pnpm verify`; view the dashboard as an enrolled student.
 - **Depends on:** 3.5.
-- **Status:** not started
+- **Status:** done (2026-05-16).
+  API: new `GET /v1/me/courses` (`app/api/v1/me.py`) — the dashboard
+  course list, each item tagged `group` (`'recommended'` |
+  `'teacher'`). Recommended = the built-in `origin='recommended'`
+  courses; teacher = courses assigned (`class_courses`) to a class the
+  caller is an **active** `class_members` member of, each carrying a
+  `published_topic_count` so the dashboard can show "coming soon" for an
+  all-draft course. `GET /v1/courses` (the public landing-page picker)
+  was scoped to `origin='recommended'` so teacher courses never leak
+  onto the marketing page; `GET /v1/courses/{slug}/units` now filters
+  topics to `status='published'` so a teacher course's draft topics
+  never show in a student's curriculum tree.
+  Web: `app/(app)/dashboard/page.tsx` — the single "Your courses"
+  section became two — **Recommended** and **From your teacher** (the
+  latter rendered only when the student has ≥1 teacher course). A
+  teacher course with `published_topic_count === 0` renders a "Coming
+  soon" tag and is not enterable.
+  >
+  > GAP flagged: nothing yet WRITES `class_courses` — a teacher has no
+  > endpoint/UI to assign a published course to a class. §5 step 10 ties
+  > assignment to publishing; 3.2/3.5 did not build it and no task in
+  > this plan owns it. The student side (4.1–4.3) READS `class_courses`;
+  > it needs a teacher-side assign flow before the path is usable
+  > end-to-end. Needs a home (a Phase 3 follow-up or a new task).
+  >
+  > **Verified.** `pnpm verify` → phase-1 17/17, phase-2 9/9, ALL CHECKS
+  > PASS. `pnpm api:test` → 404 passed, 10 skipped (399 baseline + 5 new
+  > tests in `test_my_courses.py`). `tsc` clean; `next build` ok.
+  > **Live on the real cloud DB**: an enrolled student (`active` member
+  > of a class with two teacher courses assigned — one with a published
+  > topic, one all-draft) → `GET /v1/me/courses` returned 3 Recommended
+  > + 2 teacher items, the published course `published_topic_count=1`,
+  > the all-draft one `0`; a `pending` membership grants no teacher
+  > course; `GET /v1/courses` excludes teacher courses. The dashboard's
+  > "Recommended" section was confirmed rendering in the browser; the
+  > "From your teacher" section is the same `SectHd` + `CourseCard` grid.
+  > NOTE: a full browser-as-student render of the teacher section could
+  > not be captured — admin-generated magic links produce implicit-flow
+  > tokens the app's PKCE Supabase browser client does not consume, so a
+  > fresh student session would not establish in the preview browser (an
+  > environment limitation, not a 4.1 defect). No migration. Next: 4.2.
 
 ### [ ] 4.2 — Join-a-class flow
 - **Why:** students join a class with a code and wait for approval.

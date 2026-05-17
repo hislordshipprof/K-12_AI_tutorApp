@@ -12,14 +12,18 @@ import { TodayRow } from '@/components/dashboard/today-row';
 import { displayName, useMe } from '@/hooks/use-me';
 import { api, resolveClassroomTopicPath } from '@/lib/api';
 
-// Shape returned by GET /v1/courses (Supabase row passthrough).
-interface CourseRow {
+// Shape returned by GET /v1/me/courses — the dashboard course list, each
+// item tagged `group` ('recommended' | 'teacher').
+interface MyCourseRow {
   id: string;
   slug: string;
   title: string;
   exam: string | null;
+  subject: string | null;
   color_gradient: string | null;
   icon_emoji: string | null;
+  group: 'recommended' | 'teacher';
+  published_topic_count: number | null;
 }
 
 interface CourseDto {
@@ -30,6 +34,9 @@ interface CourseDto {
   pct: number | null;     // null when we don't know yet — render as "—"
   icon: string;
   color: string;
+  group: 'recommended' | 'teacher';
+  /** A teacher course with no published topic yet — shown, not enterable. */
+  comingSoon: boolean;
   active?: boolean;
 }
 
@@ -97,19 +104,26 @@ export default function DashboardPage() {
   // a dedicated endpoint for yet — we render `pct = null` ("—") rather than
   // inventing a fake percentage.
   const { data: courses = [] } = useQuery<CourseDto[]>({
-    queryKey: ['courses'],
+    queryKey: ['dashboard-courses'],
     queryFn: async () => {
-      const remote = await api<CourseRow[]>('/v1/courses');
+      const remote = await api<MyCourseRow[]>('/v1/me/courses');
       return remote.map(
-        (c, i): CourseDto => ({
+        (c): CourseDto => ({
           id: c.id,
           slug: c.slug,
           name: c.title,
-          meta: c.exam ? `${c.exam} course` : '—',
+          meta:
+            c.group === 'teacher'
+              ? (c.subject ?? 'Teacher course')
+              : c.exam
+                ? `${c.exam} course`
+                : '—',
           pct: null,
           icon: c.icon_emoji ?? '📚',
           color: c.color_gradient ?? DEFAULT_COURSE_COLOR,
-          active: i === 0,
+          group: c.group,
+          comingSoon:
+            c.group === 'teacher' && (c.published_topic_count ?? 0) === 0,
         }),
       );
     },
@@ -126,6 +140,10 @@ export default function DashboardPage() {
     ...c,
     active: c.slug === activeSlug,
   }));
+  const recommendedCards = coursesWithActive.filter(
+    (c) => c.group === 'recommended',
+  );
+  const teacherCards = coursesWithActive.filter((c) => c.group === 'teacher');
   const { data: units = [] } = useQuery<UnitRow[]>({
     queryKey: ['course-units', activeSlug],
     queryFn: async () => {
@@ -312,14 +330,13 @@ export default function DashboardPage() {
 
       {/* BODY */}
       <div className="relative mx-auto max-w-[1180px] px-8 pb-12 pt-[50px]">
-        {/* COURSE CARDS */}
+        {/* RECOMMENDED COURSES */}
         <SectHd
-          title="Your courses"
-          sub="3 active · pick one to study"
-          action="+ Add a course"
+          title="Recommended"
+          sub="Built-in AP courses · pick one to study"
         />
         <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-          {coursesWithActive.map((c) => (
+          {recommendedCards.map((c) => (
             <CourseCard
               key={c.id}
               name={c.name}
@@ -342,6 +359,39 @@ export default function DashboardPage() {
             />
           ))}
         </div>
+
+        {/* FROM YOUR TEACHER */}
+        {teacherCards.length > 0 && (
+          <>
+            <SectHd
+              title="From your teacher"
+              sub="Courses your teacher published to a class you joined"
+            />
+            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+              {teacherCards.map((c) => (
+                <CourseCard
+                  key={c.id}
+                  name={c.name}
+                  meta={c.meta}
+                  pct={c.pct}
+                  icon={c.icon}
+                  color={c.color}
+                  active={c.active}
+                  tag={c.comingSoon ? 'Coming soon' : 'Course'}
+                  onClick={() => {
+                    // A course with no published topic yet isn't enterable.
+                    if (c.comingSoon) return;
+                    if (!c.active) {
+                      setActiveSlugState(c.slug);
+                      return;
+                    }
+                    goClassroom();
+                  }}
+                />
+              ))}
+            </div>
+          </>
+        )}
 
         {/* CURRICULUM */}
         <SectHd

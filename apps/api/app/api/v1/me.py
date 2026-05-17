@@ -217,6 +217,127 @@ async def get_me(
     }
 
 
+@router.get("/me/courses")
+async def list_my_courses(
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> list[dict[str, Any]]:
+    """The dashboard course list, split into Recommended + teacher courses.
+
+    Each item carries a `group` field — `'recommended'` (the built-in
+    OpenStax courses, `origin='recommended'`) or `'teacher'` (a course
+    assigned to a class the caller is an **active** member of, reached via
+    `class_members` -> `class_courses`, `teacher-authoring.md` §8 / §10).
+    A teacher item also carries `published_topic_count` so the dashboard
+    can show "coming soon" for an all-draft course; it is `null` on a
+    Recommended course (always enterable).
+
+    The service-role client bypasses RLS, so the teacher set is scoped to
+    the caller explicitly — only classes the caller actively belongs to.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        return []
+
+    caller_id = str(user.get("sub") or "")
+    cols = "id,slug,title,exam,subject,color_gradient,icon_emoji"
+
+    def _item(c: dict[str, Any], group: str, pub: int | None) -> dict[str, Any]:
+        return {
+            "id": str(c["id"]),
+            "slug": c.get("slug"),
+            "title": c.get("title"),
+            "exam": c.get("exam"),
+            "subject": c.get("subject"),
+            "color_gradient": c.get("color_gradient"),
+            "icon_emoji": c.get("icon_emoji"),
+            "group": group,
+            "published_topic_count": pub,
+        }
+
+    out: list[dict[str, Any]] = []
+    try:
+        # Recommended — the built-in courses.
+        rec_resp = (
+            supabase.table("courses")
+            .select(cols)
+            .eq("origin", "recommended")
+            .order("sort_order")
+            .execute()
+        )
+        out.extend(
+            _item(c, "recommended", None)
+            for c in (getattr(rec_resp, "data", None) or [])
+        )
+
+        # Teacher — courses assigned to a class the caller actively belongs to.
+        m_resp = (
+            supabase.table("class_members")
+            .select("class_id,status")
+            .eq("student_id", caller_id)
+            .eq("status", "active")
+            .execute()
+        )
+        class_ids = [
+            str(m["class_id"])
+            for m in (getattr(m_resp, "data", None) or [])
+            if m.get("class_id")
+        ]
+        course_ids: list[str] = []
+        if class_ids:
+            cc_resp = (
+                supabase.table("class_courses")
+                .select("course_id")
+                .in_("class_id", class_ids)
+                .execute()
+            )
+            for r in getattr(cc_resp, "data", None) or []:
+                cid = str(r.get("course_id") or "")
+                if cid and cid not in course_ids:
+                    course_ids.append(cid)
+
+        if course_ids:
+            tc_resp = (
+                supabase.table("courses").select(cols).in_("id", course_ids).execute()
+            )
+            teacher_courses = getattr(tc_resp, "data", None) or []
+
+            # published-topic counts: course -> units -> topics(status='published').
+            u_resp = (
+                supabase.table("units")
+                .select("id,course_id")
+                .in_("course_id", course_ids)
+                .execute()
+            )
+            units = getattr(u_resp, "data", None) or []
+            course_of_unit = {str(u["id"]): str(u["course_id"]) for u in units}
+            published: dict[str, int] = {}
+            if units:
+                t_resp = (
+                    supabase.table("topics")
+                    .select("unit_id,status")
+                    .in_("unit_id", [str(u["id"]) for u in units])
+                    .eq("status", "published")
+                    .execute()
+                )
+                for t in getattr(t_resp, "data", None) or []:
+                    cid = course_of_unit.get(str(t.get("unit_id")))
+                    if cid:
+                        published[cid] = published.get(cid, 0) + 1
+
+            out.extend(
+                _item(c, "teacher", published.get(str(c["id"]), 0))
+                for c in teacher_courses
+            )
+    except Exception as e:  # noqa: BLE001
+        log.warning("me_courses_lookup_failed", error=str(e), user=caller_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="courses lookup failed",
+        ) from e
+
+    return out
+
+
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_me(
     user: Annotated[dict[str, Any], Depends(get_current_user)],

@@ -85,13 +85,20 @@ _SAMPLE_TOPICS: dict[UUID, dict[str, Any]] = {
 # ─── Endpoints ────────────────────────────────────────────────────────────
 @router.get("/courses", response_model=list[CourseOut])
 async def list_courses() -> list[dict[str, Any]]:
-    """Public — drives the landing-page course picker."""
+    """Public — drives the landing-page course picker.
+
+    Scoped to the built-in `origin='recommended'` courses: teacher-authored
+    courses are private to their classes (`teacher-authoring.md` §4) and
+    must never surface on the public picker. The student dashboard's
+    "From your teacher" group comes from `GET /v1/me/courses` instead.
+    """
     supabase = get_supabase()
     if supabase is not None:
         try:
             resp = (
                 supabase.table("courses")
                 .select("*")
+                .eq("origin", "recommended")
                 .order("sort_order")
                 .execute()
             )
@@ -276,12 +283,17 @@ async def list_course_units(
         if not units:
             return []
 
-        # 3. Topics for those units, bulk-fetch and group.
+        # 3. Topics for those units, bulk-fetch and group. Only `published`
+        #    topics — a teacher course's draft topics must not show in a
+        #    student's curriculum tree (`teacher-authoring.md` §4); a
+        #    Recommended course's topics are all `published`, so this is a
+        #    no-op there.
         unit_ids = [u["id"] for u in units]
         t_resp = (
             supabase.table("topics")
             .select("id,unit_id,n,name,duration_min")
             .in_("unit_id", unit_ids)
+            .eq("status", "published")
             .order("n")
             .execute()
         )
