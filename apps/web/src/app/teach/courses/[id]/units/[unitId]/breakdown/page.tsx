@@ -59,6 +59,24 @@ interface SegmentationData {
   empty_reason: string | null;
 }
 
+/** An existing `topics` row of the unit (from `GET /v1/teacher/units/{id}`). */
+interface ExistingTopic {
+  id: string;
+  n: number;
+  name: string;
+  status: string;
+}
+
+interface UnitDetail {
+  topics: ExistingTopic[];
+}
+
+/** A proposed topic's mapping decision in the re-segmentation flow. */
+interface Decision {
+  action: 'add' | 'replace';
+  topicId?: string;
+}
+
 let _cid = 0;
 const cid = () => `t${(_cid += 1)}`;
 
@@ -80,6 +98,15 @@ export default function BreakdownPage() {
   const { data, isLoading, isError } = useQuery<SegmentationData>({
     queryKey: ['unit-segmentation', unitId],
     queryFn: () => api<SegmentationData>(`/v1/teacher/units/${unitId}/segmentation`),
+    enabled: unitId.length > 0,
+  });
+
+  // The unit's EXISTING topics — if it already has any, confirming the
+  // breakdown means a §13 re-segmentation (the teacher maps the new
+  // breakdown onto the current topics) rather than a first-time confirm.
+  const { data: unitDetail, isLoading: unitLoading } = useQuery<UnitDetail>({
+    queryKey: ['teacher-unit', unitId],
+    queryFn: () => api<UnitDetail>(`/v1/teacher/units/${unitId}`),
     enabled: unitId.length > 0,
   });
 
@@ -206,9 +233,24 @@ export default function BreakdownPage() {
     );
   };
 
-  if (isLoading || (data && !ready)) return <LoadingScreen />;
+  if (isLoading || unitLoading || (data && !ready)) return <LoadingScreen />;
   if (isError || !data) {
     return <NotFoundScreen courseId={courseId} unitId={unitId} />;
+  }
+
+  // A unit that already has topics → the §13 re-segmentation mapping flow.
+  const existingTopics = unitDetail?.topics ?? [];
+  if (existingTopics.length > 0) {
+    return (
+      <ResegmentView
+        courseId={courseId}
+        unitId={unitId}
+        proposed={data.topics ?? []}
+        materials={data.materials ?? []}
+        existing={existingTopics}
+        emptyReason={data.empty_reason}
+      />
+    );
   }
 
   const materials = data.materials ?? [];
@@ -357,6 +399,362 @@ export default function BreakdownPage() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ─── re-segmentation mapping view (task 5.4 · §13) ─────────────────────────── */
+
+/**
+ * Shown when the breakdown screen opens for a unit that ALREADY has topics:
+ * the teacher maps the new proposed breakdown onto the current topics —
+ * each proposed topic is added new or replaces an existing one, and any
+ * existing topic the new material no longer covers can be retired. Nothing
+ * is auto-deleted (`teacher-authoring.md` §13).
+ */
+function ResegmentView({
+  courseId,
+  unitId,
+  proposed,
+  materials,
+  existing,
+  emptyReason,
+}: {
+  courseId: string;
+  unitId: string;
+  proposed: ServerTopic[];
+  materials: SegMaterial[];
+  existing: ExistingTopic[];
+  emptyReason: string | null;
+}) {
+  const router = useRouter();
+
+  // One decision per proposed topic — default: add as a brand-new topic.
+  const [decisions, setDecisions] = useState<Decision[]>(() =>
+    proposed.map(() => ({ action: 'add' as const })),
+  );
+  const [retired, setRetired] = useState<Set<string>>(new Set());
+
+  // existing topic id -> the proposed index replacing it (at most one).
+  const replacedBy = new Map<string, number>();
+  decisions.forEach((d, i) => {
+    if (d.action === 'replace' && d.topicId) replacedBy.set(d.topicId, i);
+  });
+
+  const setDecision = (i: number, d: Decision) =>
+    setDecisions((ds) => ds.map((x, j) => (j === i ? d : x)));
+
+  const toggleRetire = (topicId: string) =>
+    setRetired((s) => {
+      const next = new Set(s);
+      if (next.has(topicId)) next.delete(topicId);
+      else next.add(topicId);
+      return next;
+    });
+
+  const applyMut = useMutation({
+    mutationFn: () =>
+      api(`/v1/teacher/units/${unitId}/resegmentation`, {
+        method: 'POST',
+        json: {
+          decisions: decisions.map((d, i) => ({
+            index: i,
+            action: d.action,
+            topic_id: d.action === 'replace' ? (d.topicId ?? null) : null,
+          })),
+          retire_topic_ids: [...retired],
+        },
+      }),
+    onSuccess: () =>
+      router.push(`/teach/courses/${courseId}/units/${unitId}`),
+  });
+
+  // Every "replace" decision must name a target topic before applying.
+  const ready =
+    proposed.length > 0 &&
+    decisions.every((d) => d.action === 'add' || Boolean(d.topicId));
+
+  const added = decisions.filter((d) => d.action === 'add').length;
+  const replacing = decisions.filter(
+    (d) => d.action === 'replace' && d.topicId,
+  ).length;
+
+  return (
+    <div className="min-h-full bg-paper">
+      <header className="relative overflow-hidden rounded-b-[28px] bg-[linear-gradient(135deg,#1B1F2E_0%,#2A2E47_100%)]">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(ellipse 50% 90% at 88% 30%, rgba(91,91,229,.28), transparent 62%), radial-gradient(ellipse 44% 80% at 8% 110%, rgba(255,200,87,.10), transparent 60%)',
+          }}
+        />
+        <div className="relative mx-auto max-w-[1180px] px-8 py-7">
+          <Link
+            href={`/teach/courses/${courseId}/units/${unitId}`}
+            className="mb-3 inline-flex items-center gap-1.5 text-[12px] font-semibold text-white/55 transition-colors hover:text-white"
+          >
+            <Icon name="prev" size={14} /> Back to unit
+          </Link>
+          <h1 className="font-display text-[26px] font-bold leading-tight tracking-[-0.02em] text-white">
+            Re-segment this unit
+          </h1>
+          <div className="mt-1 max-w-[660px] text-sm text-white/55">
+            This unit already has topics. Map the model&apos;s new breakdown
+            onto them — add a topic, replace one you have, or retire one the
+            new material no longer covers. Nothing is deleted.
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2.5">
+            <StatChip n={proposed.length} label="Proposed" />
+            <StatChip n={existing.length} label="Current topics" />
+            <StatChip
+              n={retired.size}
+              label="To retire"
+              tone={retired.size > 0 ? 'amber' : 'plain'}
+            />
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-[1180px] space-y-12 px-8 pb-32 pt-9">
+        <section>
+          <SectHd
+            title="New breakdown"
+            sub="Map each proposed topic — add it as new, or replace one you already have."
+          />
+          {proposed.length > 0 ? (
+            <div className="space-y-3">
+              {proposed.map((pt, i) => (
+                <ProposedMapCard
+                  key={i}
+                  index={i}
+                  topic={pt}
+                  existing={existing}
+                  decision={decisions[i]!}
+                  isTaken={(tid) => {
+                    const owner = replacedBy.get(tid);
+                    return owner !== undefined && owner !== i;
+                  }}
+                  retired={retired}
+                  onChange={(d) => setDecision(i, d)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-[20px] border border-dashed border-border-2 bg-white/60 px-6 py-10 text-center text-[13px] text-ink-3">
+              {emptyReason
+                ? `The model found nothing teachable here — ${emptyReason}`
+                : 'The new breakdown has no topics.'}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <SectHd
+            title="Your current topics"
+            sub="Topics not replaced above are kept as-is. Retire any the new material no longer covers — a retired topic disappears for new students but stays for anyone already mid-lesson."
+          />
+          <div className="overflow-hidden rounded-[20px] border border-border bg-white shadow-sm">
+            {existing.map((t) => (
+              <ExistingTopicRow
+                key={t.id}
+                topic={t}
+                replacedByIndex={replacedBy.get(t.id)}
+                retiring={retired.has(t.id)}
+                onToggleRetire={() => toggleRetire(t.id)}
+              />
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-white/95 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-[1180px] flex-wrap items-center justify-between gap-4 px-8 py-3.5">
+          <div className="text-[13px] text-ink-3">
+            {applyMut.isError ? (
+              <span className="font-medium text-coral">
+                Couldn&apos;t apply the re-segmentation — please try again.
+              </span>
+            ) : !ready ? (
+              'Pick a topic to replace for every "Replace" choice.'
+            ) : (
+              <>
+                <span className="font-semibold text-ink">{added}</span> added
+                {' · '}
+                <span className="font-semibold text-ink">{replacing}</span>{' '}
+                replacing
+                {' · '}
+                <span className="font-semibold text-ink">
+                  {retired.size}
+                </span>{' '}
+                retired
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-2.5">
+            <Link
+              href={`/teach/courses/${courseId}/units/${unitId}`}
+              className="rounded-xl px-4 py-2.5 text-sm font-semibold text-ink-3 transition-colors hover:bg-paper-2 hover:text-ink"
+            >
+              Cancel
+            </Link>
+            <button
+              type="button"
+              disabled={!ready || applyMut.isPending}
+              onClick={() => applyMut.mutate()}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-deep disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Icon name="check" size={15} />
+              {applyMut.isPending ? 'Applying…' : 'Apply re-segmentation'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProposedMapCard({
+  index,
+  topic,
+  existing,
+  decision,
+  isTaken,
+  retired,
+  onChange,
+}: {
+  index: number;
+  topic: ServerTopic;
+  existing: ExistingTopic[];
+  decision: Decision;
+  /** True when another proposed topic already replaces this existing one. */
+  isTaken: (topicId: string) => boolean;
+  retired: Set<string>;
+  onChange: (d: Decision) => void;
+}) {
+  const value =
+    decision.action === 'add' ? 'add' : `replace:${decision.topicId ?? ''}`;
+
+  return (
+    <div className="rounded-[20px] border border-border bg-white p-4 shadow-sm">
+      <div className="flex items-start gap-3.5">
+        <div className="mt-0.5 grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl bg-indigo-soft font-display text-sm font-bold text-indigo">
+          {index + 1}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="font-display text-[16px] font-bold tracking-[-0.015em] text-ink">
+            {topic.title}
+          </div>
+          <p className="mt-0.5 line-clamp-2 text-[13px] leading-[1.5] text-ink-3">
+            {topic.summary}
+          </p>
+          <div className="mt-2">
+            <span className="inline-flex items-center gap-1 rounded-md bg-paper-2 px-2 py-1 text-[11px] font-semibold text-ink-3">
+              <Icon name="notes" size={11} />
+              {topic.pages.length} slide pages
+            </span>
+          </div>
+        </div>
+        <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
+          <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-ink-3">
+            This topic will
+          </span>
+          <select
+            value={value}
+            aria-label={`Mapping for proposed topic ${index + 1}`}
+            onChange={(e) => {
+              const v = e.target.value;
+              onChange(
+                v === 'add'
+                  ? { action: 'add' }
+                  : { action: 'replace', topicId: v.slice('replace:'.length) },
+              );
+            }}
+            className="rounded-lg border border-border-2 bg-paper px-2.5 py-1.5 text-[13px] font-semibold text-ink outline-none transition focus:border-indigo focus:bg-white"
+          >
+            <option value="add">Be added as a new topic</option>
+            {existing.map((t) => (
+              <option
+                key={t.id}
+                value={`replace:${t.id}`}
+                disabled={isTaken(t.id) || retired.has(t.id)}
+              >
+                Replace: {t.n}. {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExistingTopicRow({
+  topic,
+  replacedByIndex,
+  retiring,
+  onToggleRetire,
+}: {
+  topic: ExistingTopic;
+  replacedByIndex: number | undefined;
+  retiring: boolean;
+  onToggleRetire: () => void;
+}) {
+  const isReplaced = replacedByIndex !== undefined;
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3.5 last:border-b-0">
+      <div className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl bg-paper-2 font-display text-[12px] font-bold text-ink-2">
+        {topic.n}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-ink">{topic.name}</span>
+          <span
+            className={cn(
+              'rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em]',
+              topic.status === 'published'
+                ? 'bg-mint-soft text-[#1C7A47]'
+                : topic.status === 'retired'
+                  ? 'bg-paper-2 text-ink-3'
+                  : 'bg-indigo-soft text-indigo',
+            )}
+          >
+            {topic.status}
+          </span>
+        </div>
+      </div>
+      {isReplaced ? (
+        <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-indigo">
+          <Icon name="check" size={13} /> Replaced by proposed topic{' '}
+          {(replacedByIndex ?? 0) + 1}
+        </span>
+      ) : retiring ? (
+        <div className="flex items-center gap-2">
+          <span className="text-[12px] font-semibold text-[#8A6800]">
+            Will be retired
+          </span>
+          <button
+            type="button"
+            onClick={onToggleRetire}
+            className="rounded-lg px-2.5 py-1.5 text-[12px] font-semibold text-ink-3 transition-colors hover:bg-paper-2 hover:text-ink"
+          >
+            Undo
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <span className="text-[12px] text-ink-3">Kept as-is</span>
+          <button
+            type="button"
+            onClick={onToggleRetire}
+            className="rounded-lg border border-border-2 px-2.5 py-1.5 text-[12px] font-semibold text-ink-2 transition-colors hover:border-coral hover:bg-coral-soft hover:text-coral"
+          >
+            Retire
+          </button>
+        </div>
+      )}
     </div>
   );
 }

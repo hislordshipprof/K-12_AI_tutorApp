@@ -43,7 +43,7 @@ work that can proceed alongside Phase 0.
 | 2 — Authoring pipeline | 2.1–2.8 | 8/8 — COMPLETE (ingest → segment → confirm → render → persona → generate → quiz → validate + e2e + practice extraction) |
 | 3 — Admin board | 3.1–3.6 | 6/6 — COMPLETE (scaffold · class mgmt · course/unit + upload · segmentation + confirm · topic generate/publish · assign courses to classes) |
 | 4 — Student side | 4.1–4.3 | 3/3 — COMPLETE (dashboard split · join-a-class · classroom slide + annotation) |
-| 5 — Polish | 5.1–5.4 | 3/4 — 5.1 (version UX) · 5.2 (cover art) · 5.3 (analytics) done; 5.4 = re-segmentation mapping flow |
+| 5 — Polish | 5.1–5.4 | 4/4 — COMPLETE (version UX · course cover art · class analytics · re-segmentation mapping flow) |
 
 ---
 
@@ -1375,7 +1375,7 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   > done" + "88%", no draft topics, the "1 Student" chip. No console
   > errors. No migration. Next: 5.4.
 
-### [ ] 5.4 — Re-segmentation-after-publish mapping flow
+### [x] 5.4 — Re-segmentation-after-publish mapping flow
 - **Why:** §13 — re-segmenting a unit that already has PUBLISHED topics
   must *diff* the proposed breakdown against existing topics and let the
   teacher map each (keep / replace / add / retire) rather than
@@ -1391,4 +1391,50 @@ mint real test JWTs. Existing Supabase client scaffolding (web) and
   while in-progress students keep it; no data loss.
 - **Verify:** `pnpm verify`; re-segment a unit with a published topic.
 - **Depends on:** 3.4, 3.5.
-- **Status:** not started
+- **Status:** done (2026-05-17).
+  Design decisions (made autonomously, per the user's go-ahead — the doc
+  gives §13 behaviour only):
+  · `retired` is a third `topics.status` value — `topics.status` is free
+    text with no CHECK constraint, so **no migration** is needed.
+  · `replace` keeps the existing topic row (id + `n` stable); it rewrites
+    `name` / `summary` / `topic_pages`, forces `status='draft'` and clears
+    `active_version_id`. No `topic_progress` row is deleted — clearing
+    `active_version_id` re-arms the §4 reset (the topic must be
+    re-generated + re-published; stale `topic_progress` then triggers the
+    §4 "lesson updated" reset). This is the no-data-loss reading of §4.
+  · the diff/default mapping is computed **client-side** (match by name) —
+    no extra GET endpoint; the apply is one new POST.
+  API: `apply_resegmentation` (`app/pipeline/confirm.py`) +
+  `POST /v1/teacher/units/{id}/resegmentation` — maps the latest proposed
+  breakdown onto a unit's EXISTING topics: each proposed topic is `add`ed
+  (new draft topic) or `replace`s a chosen existing one; `retire_topic_ids`
+  flip to `status='retired'`; the rest are KEPT untouched. Validates the
+  whole mapping (bad index / topic / replace+retire conflict → 400) before
+  mutating. `list_course_units` (`courses.py`) now fetches
+  published + retired topics and drops a retired topic unless the caller
+  has a `topic_progress` row for it — hidden from new students, kept for
+  in-progress ones.
+  Web: the breakdown page (`units/[unitId]/breakdown`) branches — a unit
+  with existing topics renders a `ResegmentView` (per-proposed-topic
+  add/replace `<select>`, per-existing-topic keep/retire) instead of the
+  first-time confirm editor.
+  Tests: new `test_resegmentation.py` (7 — add / replace / retire / keep +
+  bad-index / unknown-topic / replace-retire-conflict) and 2 in
+  `test_courses.py` (retired topic hidden from a new student, kept for an
+  in-progress one). Suite 435→444.
+  >
+  > **Verified.** `pnpm verify` green; `pnpm api:test` → 444 passed.
+  > **Live on the cloud DB**: re-segmented Unit 8 (1 published + 6 draft
+  > topics) via `POST .../resegmentation` as the owning teacher —
+  > `{added:1, replaced:1, retired:1, kept:5}`; confirmed the replaced
+  > draft topic was repointed (name from the proposal, `status='draft'`),
+  > a new topic appended at n=8, the retired topic → `status='retired'`,
+  > and the published topic + 4 others left untouched (no data loss); a
+  > non-teacher got 403. Retire visibility: a student with no progress on
+  > the retired topic did not see it in `GET /v1/courses/{slug}/units`;
+  > after a `topic_progress` row was added the topic reappeared. The unit
+  > was then fully restored to its 7-topic before-state. **Browser**
+  > (signed in as the owning teacher): the breakdown page rendered the
+  > "Re-segment this unit" mapping view — 7 add/replace selects, the
+  > current-topics list with Retire controls. No console errors. No
+  > migration. Phase 5 COMPLETE.

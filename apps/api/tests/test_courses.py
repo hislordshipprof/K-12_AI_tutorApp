@@ -131,3 +131,95 @@ def test_get_topic_returns_derived_fallback_when_supabase_empty(
     body = r.json()
     assert body["id"] is None
     assert body["has_content"] is False
+
+
+# ─── /courses/{slug}/units — retired-topic visibility (task 5.4) ──────────
+# `dev_headers` authenticates as this id (see conftest.py).
+_CALLER = "00000000-0000-0000-0000-000000000001"
+_COURSE_ID = "c0000000-0000-0000-0000-0000000000c0"
+_UNIT_ID = "c0000000-0000-0000-0000-0000000000u1"
+_PUB_TOPIC = "c0000000-0000-0000-0000-00000000t001"
+_RETIRED_TOPIC = "c0000000-0000-0000-0000-00000000t002"
+
+
+class _UnitsQ:
+    """A select builder applying `.eq()` + `.in_()` filters on execute."""
+
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = [dict(r) for r in rows]
+        self._eq: dict[str, Any] = {}
+        self._in: list[tuple[str, set[str]]] = []
+
+    def select(self, *_a: Any) -> "_UnitsQ":
+        return self
+
+    def order(self, *_a: Any, **_k: Any) -> "_UnitsQ":
+        return self
+
+    def limit(self, *_a: Any) -> "_UnitsQ":
+        return self
+
+    def eq(self, key: str, value: Any) -> "_UnitsQ":
+        self._eq[key] = value
+        return self
+
+    def in_(self, key: str, values: Any) -> "_UnitsQ":
+        self._in.append((key, {str(v) for v in values}))
+        return self
+
+    def execute(self) -> MagicMock:
+        out: list[dict[str, Any]] = []
+        for r in self.rows:
+            if not all(str(r.get(k)) == str(v) for k, v in self._eq.items()):
+                continue
+            if not all(str(r.get(k)) in vs for k, vs in self._in):
+                continue
+            out.append(dict(r))
+        return MagicMock(data=out)
+
+
+def _units_supabase(progress: list[dict[str, Any]]) -> MagicMock:
+    """A Supabase mock for `list_course_units`: one course, one unit, a
+    published + a retired topic, and the caller's `topic_progress` rows."""
+    tables: dict[str, list[dict[str, Any]]] = {
+        "courses": [{"id": _COURSE_ID, "slug": "fluids-x"}],
+        "units": [{"id": _UNIT_ID, "n": 1, "name": "Unit 1", "course_id": _COURSE_ID}],
+        "topics": [
+            {"id": _PUB_TOPIC, "unit_id": _UNIT_ID, "n": 1, "name": "Pressure",
+             "duration_min": 10, "status": "published"},
+            {"id": _RETIRED_TOPIC, "unit_id": _UNIT_ID, "n": 2, "name": "Old Density",
+             "duration_min": 9, "status": "retired"},
+        ],
+        "topic_progress": progress,
+    }
+    client = MagicMock(name="supabase")
+    client.table.side_effect = lambda name: _UnitsQ(list(tables.get(name, [])))
+    return client
+
+
+def test_course_units_hides_retired_topic_from_new_student(
+    client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retired topic the caller never started is omitted from the tree."""
+    sb = _units_supabase(progress=[])
+    monkeypatch.setattr("app.api.v1.courses.get_supabase", lambda: sb)
+
+    r = client.get("/v1/courses/fluids-x/units", headers=dev_headers)
+    assert r.status_code == 200
+    topic_ids = {t["id"] for u in r.json() for t in u["topics"]}
+    assert topic_ids == {_PUB_TOPIC}  # retired one hidden
+
+
+def test_course_units_keeps_retired_topic_for_in_progress_student(
+    client: Any, dev_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retired topic the caller has progress on is still shown to them."""
+    sb = _units_supabase(
+        progress=[{"topic_id": _RETIRED_TOPIC, "user_id": _CALLER}]
+    )
+    monkeypatch.setattr("app.api.v1.courses.get_supabase", lambda: sb)
+
+    r = client.get("/v1/courses/fluids-x/units", headers=dev_headers)
+    assert r.status_code == 200
+    topic_ids = {t["id"] for u in r.json() for t in u["topics"]}
+    assert topic_ids == {_PUB_TOPIC, _RETIRED_TOPIC}  # in-progress keeps it

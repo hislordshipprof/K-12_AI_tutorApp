@@ -402,7 +402,7 @@ async def get_topic_slide(
 @router.get("/courses/{slug}/units")
 async def list_course_units(
     slug: str,
-    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
 ) -> list[dict[str, Any]]:
     """Nested unit/topic tree for a course — drives the dashboard curriculum view.
 
@@ -454,22 +454,51 @@ async def list_course_units(
         if not units:
             return []
 
-        # 3. Topics for those units, bulk-fetch and group. Only `published`
-        #    topics — a teacher course's draft topics must not show in a
-        #    student's curriculum tree (`teacher-authoring.md` §4); a
-        #    Recommended course's topics are all `published`, so this is a
-        #    no-op there.
+        # 3. Topics for those units, bulk-fetch and group. `draft` topics
+        #    never show in a student's curriculum tree (`teacher-authoring.md`
+        #    §4). `retired` topics (§13, task 5.4) are hidden from NEW
+        #    students but KEPT for students already in progress — so we fetch
+        #    published + retired, then drop any retired topic the caller has
+        #    no `topic_progress` row for. A Recommended course's topics are
+        #    all `published`, so this is a no-op there.
         unit_ids = [u["id"] for u in units]
         t_resp = (
             supabase.table("topics")
-            .select("id,unit_id,n,name,duration_min")
+            .select("id,unit_id,n,name,duration_min,status")
             .in_("unit_id", unit_ids)
-            .eq("status", "published")
+            .in_("status", ["published", "retired"])
             .order("n")
             .execute()
         )
+        topic_rows = getattr(t_resp, "data", None) or []
+
+        # Which retired topics does the caller already have progress on?
+        retired_ids = [
+            str(t["id"]) for t in topic_rows if t.get("status") == "retired"
+        ]
+        kept_retired: set[str] = set()
+        if retired_ids:
+            caller_id = str(user.get("sub") or "")
+            p_resp = (
+                supabase.table("topic_progress")
+                .select("topic_id")
+                .eq("user_id", caller_id)
+                .in_("topic_id", retired_ids)
+                .execute()
+            )
+            kept_retired = {
+                str(r["topic_id"])
+                for r in (getattr(p_resp, "data", None) or [])
+                if r.get("topic_id")
+            }
+
         topics_by_unit: dict[str, list[dict[str, Any]]] = {}
-        for t in (getattr(t_resp, "data", None) or []):
+        for t in topic_rows:
+            if (
+                t.get("status") == "retired"
+                and str(t["id"]) not in kept_retired
+            ):
+                continue  # a retired topic the caller never started — hide it
             topics_by_unit.setdefault(str(t["unit_id"]), []).append(
                 {
                     "id": t["id"],

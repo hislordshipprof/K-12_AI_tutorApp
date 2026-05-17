@@ -24,7 +24,7 @@ import secrets
 import string
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from anyio import to_thread
@@ -43,7 +43,11 @@ from app.core.logging import get_logger
 from app.core.rate_limit import RateLimitExceeded, ingest_acquire
 from app.core.security import get_user_role, require_role
 from app.core.supabase import get_supabase
-from app.pipeline.confirm import ConfirmError, confirm_breakdown
+from app.pipeline.confirm import (
+    ConfirmError,
+    apply_resegmentation,
+    confirm_breakdown,
+)
 from app.pipeline.ingest import IngestRejected, ingest_material, validate_upload
 from app.pipeline.jobs import run_job
 from app.pipeline.render import render_topic
@@ -419,6 +423,31 @@ class ConfirmTopicsRequest(BaseModel):
     """
 
     topics: list[ProposedTopic]
+
+
+class ResegmentDecision(BaseModel):
+    """One proposed topic's disposition in a re-segmentation mapping (§13).
+
+    `index` points into the latest segmentation's proposed `topics`;
+    `action` is `add` (a new draft topic) or `replace` (repoint the
+    existing `topic_id`).
+    """
+
+    index: int = Field(ge=0)
+    action: Literal["add", "replace"]
+    topic_id: UUID | None = None
+
+
+class ResegmentationRequest(BaseModel):
+    """Request body for `POST /v1/teacher/units/{id}/resegmentation` (§13).
+
+    `decisions` is one entry per proposed topic to materialise;
+    `retire_topic_ids` are existing topics to retire. Existing topics that
+    are neither replaced nor retired are kept untouched.
+    """
+
+    decisions: list[ResegmentDecision] = Field(default_factory=list)
+    retire_topic_ids: list[UUID] = Field(default_factory=list)
 
 
 class TopicUpdate(BaseModel):
@@ -1820,6 +1849,54 @@ async def confirm_unit_topics(
         "created": result.created,
         "updated": result.updated,
         "page_count": result.page_count,
+    }
+
+
+@router.post("/units/{unit_id}/resegmentation")
+async def apply_unit_resegmentation(
+    unit_id: UUID,
+    body: ResegmentationRequest,
+    user: Annotated[dict[str, Any], Depends(require_role("teacher", "admin"))],
+) -> dict[str, Any]:
+    """Apply a re-segmentation mapping to a unit with existing topics (`§13`).
+
+    Teacher/admin-gated; the unit's course must be owned by the caller (or
+    caller is admin) else 404. Unlike `POST .../topics` — the first-time
+    confirm, which upserts topics by position and would silently overwrite a
+    re-segmented unit's published topics — this maps the latest proposed
+    breakdown onto the unit's EXISTING topics by the teacher's explicit
+    choice: each proposed topic is `add`ed as a new draft topic or
+    `replace`s a chosen existing one; `retire_topic_ids` are retired; every
+    other existing topic is kept untouched. Nothing is deleted. A
+    `ConfirmError` (missing / empty segmentation, bad index, a `topic_id`
+    not in the unit, or a topic mapped to both replace and retire) -> 400.
+    """
+    supabase = get_supabase()
+    if supabase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="unit not found"
+        )
+
+    caller_id = str(user.get("sub") or "")
+    _load_owned_unit(supabase, str(unit_id), caller_id)
+
+    try:
+        result = await apply_resegmentation(
+            str(unit_id),
+            decisions=[d.model_dump(mode="json") for d in body.decisions],
+            retire_topic_ids=[str(t) for t in body.retire_topic_ids],
+        )
+    except ConfirmError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    return {
+        "added": result.added,
+        "replaced": result.replaced,
+        "retired": result.retired,
+        "kept": result.kept,
+        "topic_ids": result.topic_ids,
     }
 
 

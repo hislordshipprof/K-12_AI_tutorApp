@@ -300,4 +300,232 @@ async def confirm_breakdown(
     )
 
 
-__all__ = ["ConfirmError", "ConfirmResult", "confirm_breakdown"]
+# ─────────────────────────────────────────────────────────────────────────────
+# Re-segmentation — map a fresh breakdown onto a unit's EXISTING topics
+# (`teacher-authoring.md` §13, task 5.4).
+# ─────────────────────────────────────────────────────────────────────────────
+@dataclass
+class ResegmentationResult:
+    """Outcome of `apply_resegmentation` — a count per mapping action.
+
+    `topic_ids` are the added + replaced `topics` rows, in decision order.
+    """
+
+    unit_id: str
+    added: int = 0
+    replaced: int = 0
+    retired: int = 0
+    kept: int = 0
+    topic_ids: list[str] = field(default_factory=list)
+
+
+def _write_topic_pages(
+    supabase: Any,
+    topic_id: str,
+    proposed_topic: dict[str, Any],
+    material_ids: list[str],
+) -> int:
+    """Rewrite a topic's `topic_pages` from a proposed topic's page set.
+
+    Delete-then-insert, the same re-sync `confirm_breakdown` uses. Returns
+    the number of page rows written.
+    """
+    supabase.table("topic_pages").delete().eq("topic_id", topic_id).execute()
+    page_rows: list[dict[str, Any]] = []
+    for ord_, page in enumerate(_renderable_pages(proposed_topic)):
+        midx = page["material_idx"]
+        material_id = (
+            material_ids[midx] if 0 <= midx < len(material_ids) else None
+        )
+        if material_id is None:
+            log.warning(
+                "resegment_unresolved_material",
+                topic_id=topic_id,
+                material_idx=midx,
+            )
+            continue
+        page_rows.append(
+            {
+                "topic_id": topic_id,
+                "material_id": material_id,
+                "page_idx": page["page_idx"],
+                "role": "slide",
+                "ord": ord_,
+            }
+        )
+    if page_rows:
+        supabase.table("topic_pages").insert(page_rows).execute()
+    return len(page_rows)
+
+
+async def apply_resegmentation(
+    unit_id: str,
+    *,
+    decisions: list[dict[str, Any]],
+    retire_topic_ids: list[str],
+    material_ids: list[str] | None = None,
+) -> ResegmentationResult:
+    """Apply a teacher's re-segmentation mapping (`teacher-authoring.md` §13).
+
+    Unlike `confirm_breakdown` (the first-time confirm, which upserts topics
+    by POSITION and so silently overwrites a re-segmented unit's published
+    topics), this maps the latest proposed breakdown onto a unit's EXISTING
+    topics by the teacher's explicit choice.
+
+    `decisions` is one entry per proposed topic to materialise:
+    `{"index": <int>, "action": "add"|"replace", "topic_id": <uuid|None>}`.
+      * ``add``     — insert a brand-new `draft` `topics` row from the
+                      proposal (appended after the unit's current topics).
+      * ``replace`` — repoint an EXISTING topic at the proposal: rewrite its
+                      `name` / `summary` / `topic_pages`, force it back to
+                      `status='draft'` and clear `active_version_id`. That
+                      re-arms the §4 progress reset — the topic must be
+                      re-generated and re-published, and its `topic_progress`
+                      rows (still tagged the now-cleared version) trigger the
+                      §4 "lesson updated" reset. No row is deleted.
+
+    `retire_topic_ids` flips existing topics to `status='retired'` — hidden
+    from new students, kept for in-progress ones. Existing topics that are
+    neither replaced nor retired are KEPT untouched.
+
+    Raises `ConfirmError` on a missing / empty segmentation, an out-of-range
+    proposed `index`, a `topic_id` not in the unit, or a topic mapped to
+    both replace and retire.
+    """
+    from app.core.supabase import get_supabase
+
+    supabase = get_supabase()
+    if supabase is None:
+        raise ConfirmError(
+            "no_supabase", "apply_resegmentation requires Supabase to be configured"
+        )
+
+    seg = _latest_segmentation(supabase, unit_id)
+    proposed_topics = [
+        t
+        for t in ((seg.get("proposed") or {}).get("topics") or [])
+        if isinstance(t, dict)
+    ]
+    if not proposed_topics:
+        raise ConfirmError(
+            "empty_breakdown",
+            f"unit {unit_id}'s latest segmentation proposed no topics",
+        )
+
+    if material_ids is None:
+        mat_resp = (
+            supabase.table("lesson_materials")
+            .select("id,uploaded_at")
+            .eq("unit_id", unit_id)
+            .order("uploaded_at")
+            .execute()
+        )
+        material_ids = [
+            str(r["id"]) for r in (getattr(mat_resp, "data", None) or [])
+        ]
+
+    existing_resp = (
+        supabase.table("topics").select("id,n").eq("unit_id", unit_id).execute()
+    )
+    existing_rows = getattr(existing_resp, "data", None) or []
+    existing_ids = {str(r["id"]) for r in existing_rows}
+    max_n = max(
+        (int(r["n"]) for r in existing_rows if r.get("n") is not None), default=0
+    )
+
+    # ── Validate the whole mapping before mutating anything. ──
+    retire_set = {str(t) for t in retire_topic_ids}
+    replace_set: set[str] = set()
+    for d in decisions:
+        idx = int(d.get("index", -1))
+        if not 0 <= idx < len(proposed_topics):
+            raise ConfirmError(
+                "bad_index", f"proposed-topic index {idx} is out of range"
+            )
+        if d.get("action") == "replace":
+            tid = str(d.get("topic_id") or "")
+            if tid not in existing_ids:
+                raise ConfirmError(
+                    "bad_topic", f"topic {tid} is not in unit {unit_id}"
+                )
+            replace_set.add(tid)
+    for tid in retire_set:
+        if tid not in existing_ids:
+            raise ConfirmError(
+                "bad_topic", f"topic {tid} is not in unit {unit_id}"
+            )
+    if replace_set & retire_set:
+        raise ConfirmError(
+            "conflict", "a topic cannot be both replaced and retired"
+        )
+
+    # ── Apply. ──
+    added = replaced = 0
+    topic_ids: list[str] = []
+    next_n = max_n + 1
+    for d in decisions:
+        pt = proposed_topics[int(d["index"])]
+        name_fields = {
+            "name": str(pt.get("title") or "Untitled topic"),
+            "summary": str(pt.get("summary") or ""),
+        }
+        if d.get("action") == "replace":
+            topic_id = str(d["topic_id"])
+            supabase.table("topics").update(
+                {**name_fields, "status": "draft", "active_version_id": None}
+            ).eq("id", topic_id).execute()
+            replaced += 1
+        else:  # add
+            ins = (
+                supabase.table("topics")
+                .insert(
+                    {
+                        **name_fields,
+                        "unit_id": unit_id,
+                        "n": next_n,
+                        "sort_order": next_n - 1,
+                        "status": "draft",
+                    }
+                )
+                .execute()
+            )
+            ins_rows = getattr(ins, "data", None) or []
+            topic_id = str(ins_rows[0]["id"]) if ins_rows else ""
+            next_n += 1
+            added += 1
+        topic_ids.append(topic_id)
+        _write_topic_pages(supabase, topic_id, pt, material_ids)
+
+    retired = 0
+    for tid in retire_set:
+        supabase.table("topics").update({"status": "retired"}).eq(
+            "id", tid
+        ).execute()
+        retired += 1
+
+    kept = len(existing_ids) - replaced - retired
+    log.info(
+        "apply_resegmentation_done",
+        unit_id=unit_id,
+        added=added,
+        replaced=replaced,
+        retired=retired,
+        kept=kept,
+    )
+    return ResegmentationResult(
+        unit_id=unit_id,
+        added=added,
+        replaced=replaced,
+        retired=retired,
+        kept=kept,
+        topic_ids=topic_ids,
+    )
+
+
+__all__ = [
+    "ConfirmError",
+    "ConfirmResult",
+    "ResegmentationResult",
+    "apply_resegmentation",
+    "confirm_breakdown",
+]
