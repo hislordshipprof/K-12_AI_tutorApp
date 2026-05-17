@@ -75,7 +75,7 @@ work that can proceed alongside Phase 0.
   voice), deferred at the user's request. Tick this box after that.
   Deadline reminder: Gemini 2.5 dies 2026-06-17.
 
-### [ ] M.2 — Dedicated TTS slot
+### [x] M.2 — Dedicated TTS slot
 - **Why:** `/v1/tts` abuses the Live A2A model for read-aloud; a real
   TTS model reads verbatim, costs less, and has expressive tags.
 - **Build:** add a `gemini_model_tts` setting
@@ -86,7 +86,28 @@ work that can proceed alongside Phase 0.
   latency is no worse than before.
 - **Verify:** `pnpm api:test`; play a lesson, confirm narration audio.
 - **Depends on:** M.1.
-- **Status:** not started
+- **Status:** done (2026-05-17).
+  `config.gemini_model_tts` added (pinned `gemini-3.1-flash-tts-preview`).
+  `GeminiService.synthesize_speech(text, voice)` — a one-shot
+  `generate_content` call with `response_modalities=['AUDIO']` + a
+  `speech_config` voice; `_extract_image_bytes` was generalised to
+  `_extract_inline_data(response, kind)` and reused for the audio part.
+  `tts.py` rewritten: the Live-session `get_live_client` / `_collect_pcm`
+  drain and the "keep the system prompt short so it doesn't explain"
+  hack are gone — `synthesize` now just calls `synthesize_speech` and
+  WAV-wraps the PCM (a TTS model reads verbatim by design).
+  Tests: new `test_tts.py` — 6 (WAV blob shape, voice passthrough,
+  default voice, blank-text 400, upstream-failure 502, empty-audio 502).
+  Suite 444→450.
+  >
+  > **Verified.** `pnpm verify` green; `pnpm api:test` → 450 passed.
+  > **Live**: a real `synthesize_speech` call against
+  > `gemini-3.1-flash-tts-preview` returned 184 KB of 24 kHz PCM that
+  > WAV-wrapped to a valid RIFF/WAVE clip — ~3.8 s for an 8-word
+  > sentence, i.e. a natural verbatim reading pace (an "explaining"
+  > model would run far longer), so the §3b failure mode is gone. The
+  > one-shot generate call has strictly less overhead than the former
+  > per-step Live session, so latency is no worse.
 
 ### [x] M.3 — Pin generation model ids
 - **Why:** the content pipeline bakes the model name into a provenance

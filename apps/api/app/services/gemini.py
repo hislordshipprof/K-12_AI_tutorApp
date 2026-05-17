@@ -97,11 +97,12 @@ def _coerce_json(text: str) -> dict[str, Any] | list[Any] | None:
         return None
 
 
-def _extract_image_bytes(response: Any) -> bytes | None:
-    """Pull the first inline image part's raw bytes out of a genai response.
+def _extract_inline_data(response: Any, kind: str) -> bytes | None:
+    """Pull the first inline `{kind}/*` part's raw bytes from a genai response.
 
-    Image models return the picture as an `inline_data` part on a candidate;
-    its `data` is raw bytes (new SDK) or base64 text (older shapes).
+    Image and TTS models return their output as an `inline_data` part on a
+    candidate; its `data` is raw bytes (new SDK) or base64 text (older
+    shapes). `kind` is the mime prefix to match — `"image"` or `"audio"`.
     """
     for cand in getattr(response, "candidates", None) or []:
         content = getattr(cand, "content", None)
@@ -111,7 +112,7 @@ def _extract_image_bytes(response: Any) -> bytes | None:
                 continue
             mime = str(getattr(inline, "mime_type", "") or "")
             data = getattr(inline, "data", None)
-            if data and mime.startswith("image/"):
+            if data and mime.startswith(f"{kind}/"):
                 if isinstance(data, str):
                     return base64.b64decode(data)
                 return bytes(data)
@@ -274,13 +275,53 @@ class GeminiService:
                     config={"response_modalities": ["TEXT", "IMAGE"]},
                 )
                 self._log_usage(response, op="generate_image")
-                data = _extract_image_bytes(response)
+                data = _extract_inline_data(response, "image")
                 if data:
                     return data
                 raise RuntimeError("generate_image: model returned no image part")
 
         # tenacity always raises on exhaustion — this is just for type-checkers.
         raise RuntimeError("generate_image: retry loop exhausted without yielding")
+
+    async def synthesize_speech(
+        self,
+        text: str,
+        voice: str,
+        model: str | None = None,
+    ) -> bytes:
+        """Read `text` aloud with a dedicated TTS model — returns raw PCM.
+
+        One-shot `generate_content` call against `gemini-3.1-flash-tts-preview`
+        (`model-strategy.md` §3b) — the model reads verbatim, so no system
+        prompt / "explain" hack is needed. Output is 24 kHz 16-bit mono PCM
+        (the caller wraps it as WAV). Raises on failure.
+        """
+        model_name = model or settings.gemini_model_tts
+
+        async for attempt in _retry_policy():
+            with attempt:
+                response = await self.client.aio.models.generate_content(
+                    model=model_name,
+                    contents=text,
+                    config={
+                        "response_modalities": ["AUDIO"],
+                        "speech_config": {
+                            "voice_config": {
+                                "prebuilt_voice_config": {"voice_name": voice}
+                            }
+                        },
+                    },
+                )
+                self._log_usage(response, op="synthesize_speech")
+                data = _extract_inline_data(response, "audio")
+                if data:
+                    return data
+                raise RuntimeError(
+                    "synthesize_speech: model returned no audio part"
+                )
+
+        # tenacity always raises on exhaustion — this is just for type-checkers.
+        raise RuntimeError("synthesize_speech: retry loop exhausted")
 
     async def generate_from_pdfs(
         self,

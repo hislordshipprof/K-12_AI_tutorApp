@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     gemini_model_live: str = Field(
         default="gemini-3.1-flash-live-preview", alias="GEMINI_MODEL_LIVE"
     )
+    # Lesson-step read-aloud TTS (`model-strategy.md` §3b) — a dedicated
+    # text-to-speech model that reads verbatim, replacing the Live
+    # audio-to-audio hack. One-shot generate call per step.
+    gemini_model_tts: str = Field(
+        default="gemini-3.1-flash-tts-preview", alias="GEMINI_MODEL_TTS"
+    )
     gemini_model_pro: str = Field(default="gemini-3.1-pro-preview", alias="GEMINI_MODEL_PRO")
     gemini_model_embed: str = Field(
         default="gemini-embedding-2", alias="GEMINI_MODEL_EMBED"
