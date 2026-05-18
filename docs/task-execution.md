@@ -36,7 +36,7 @@ work that can proceed alongside Phase 0.
 
 | Phase | Tasks | Done |
 |---|---|---|
-| M — Model strategy | M.1–M.3 | 2/3 — M.3 done; M.1 — Live model connects (verified via 0.5); only the user's barge-in check remains |
+| M — Model strategy | M.1–M.3 | 2/3 — M.2 (TTS slot) · M.3 (pinned ids) done; M.1 (Live model) BUILT + connects (verified via 0.5) — only the user's manual barge-in check remains |
 | 0 — Auth & compliance | 0.1–0.4 | 4/4 — COMPLETE |
 | 0.5 — Voice mode repair | 0.5 | 1/1 — COMPLETE |
 | 1 — Schema foundations | 1.1–1.4 | 4/4 — COMPLETE (schema + RLS + Storage + pipeline harness) |
