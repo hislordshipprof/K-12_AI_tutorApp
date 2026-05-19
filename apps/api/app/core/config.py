@@ -127,14 +127,27 @@ class Settings(BaseSettings):
         return self.environment.lower() in {"production", "prod"}
 
     @property
+    def is_local_environment(self) -> bool:
+        """True only when ENVIRONMENT names a genuine local-development env.
+
+        The relaxed-auth dev shortcut (`X-Dev-User-Id`) is allowed *only* in
+        these environments. Anything else — production, staging, or an
+        unrecognised value — is treated as non-local and the shortcut stays
+        off, no matter what DEV_MODE says.
+        """
+        return self.environment.lower() in {"development", "dev", "local", "test"}
+
+    @property
     def is_dev(self) -> bool:
         """True when relaxed-auth dev shortcuts (e.g. X-Dev-User-Id header) are allowed.
 
-        Hard rule: production NEVER allows dev shortcuts even if DEV_MODE=true
-        was accidentally set. This is a defense-in-depth gate; pair with the
+        Hard rule: the dev shortcut is honoured ONLY when DEV_MODE is on AND
+        the process is running in a genuine local-development environment.
+        Production and staging NEVER allow it, even if DEV_MODE=true was
+        accidentally set. This is a defense-in-depth gate; pair with the
         startup assertion in `app.main` lifespan.
         """
-        if self.is_production:
+        if not self.is_local_environment:
             return False
         return self.dev_mode
 

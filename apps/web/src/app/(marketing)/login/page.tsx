@@ -52,7 +52,11 @@ function SignInForm() {
   const [submitting, setSubmitting] = useState(false);
   const [oauthing, setOauthing] = useState(false);
 
-  const redirectTo = searchParams.get('redirectTo') ?? '/dashboard';
+  // An explicit `?redirectTo=` deep link is honoured as-is after sign-in.
+  // With no param, the post-login destination is resolved from the user's
+  // role (teacher/admin -> /teach, student -> /dashboard).
+  const explicitRedirect = searchParams.get('redirectTo');
+  const redirectTo = explicitRedirect ?? '/dashboard';
 
   // Surface server-side redirects (e.g. from /auth/callback) as toasts.
   useEffect(() => {
@@ -89,7 +93,23 @@ function SignInForm() {
         return;
       }
       toast.success('Welcome back!');
-      router.push(redirectTo);
+      // Explicit deep link wins; otherwise route by the signed-in role.
+      let destination = redirectTo;
+      if (!explicitRedirect) {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (user) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single();
+          const role = (profile?.role as string | undefined) ?? 'student';
+          if (role === 'teacher' || role === 'admin') destination = '/teach';
+        }
+      }
+      router.push(destination);
       router.refresh();
     } finally {
       setSubmitting(false);

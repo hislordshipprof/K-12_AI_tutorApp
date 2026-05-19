@@ -10,6 +10,7 @@ export type RailScreen =
   | 'notes'
   | 'history'
   | 'classroom'
+  | 'teach'
   | 'settings';
 
 interface RailItem {
@@ -28,6 +29,8 @@ const ITEMS: RailItem[] = [
 export interface RailProps {
   current: RailScreen;
   onNav: (screen: RailScreen) => void;
+  /** Show the "Teacher board" entry — only for a teacher/admin. */
+  showTeacherBoard?: boolean;
 }
 
 interface RailButtonProps {
@@ -69,7 +72,7 @@ function RailButton({ active, label, onClick, iconName }: RailButtonProps) {
  * Ported from the prototype's `Rail`. The icons-only width and hover
  * tooltips match the `.rail` rules in styles.css.
  */
-export function Rail({ current, onNav }: RailProps) {
+export function Rail({ current, onNav, showTeacherBoard = false }: RailProps) {
   return (
     <aside className="flex flex-col items-center gap-1.5 border-r border-border bg-white py-[18px]">
       <button
@@ -91,6 +94,14 @@ export function Rail({ current, onNav }: RailProps) {
       ))}
       <div className="my-2 h-px w-[30px] bg-border" />
       <RailButton iconName="play" label="Resume lesson" onClick={() => onNav('classroom')} />
+      {showTeacherBoard && (
+        <RailButton
+          iconName="layout"
+          label="Teacher board"
+          active={current === 'teach'}
+          onClick={() => onNav('teach')}
+        />
+      )}
       <div className="mt-auto">
         <RailButton iconName="settings" label="Settings" onClick={() => onNav('settings')} />
       </div>

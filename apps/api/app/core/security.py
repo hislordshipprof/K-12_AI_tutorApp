@@ -7,9 +7,11 @@ both, picking the strategy from each token's own `alg` header, so
 downstream handlers receive the authenticated user's claims (`sub` is the
 user id).
 
-For local development (`DEV_MODE=true` or `LOG_LEVEL=DEBUG`) we also accept
-a special `X-Dev-User-Id` header so frontend devs can hit the API without
-a full Supabase round-trip.
+For genuine local development (`DEV_MODE=true` *and* a local `ENVIRONMENT`
+such as `development`/`local`/`test`) we also accept a special
+`X-Dev-User-Id` header so frontend devs can hit the API without a full
+Supabase round-trip. In production or staging the header is ignored
+entirely, even if `DEV_MODE` was somehow set.
 """
 
 from __future__ import annotations
@@ -132,17 +134,28 @@ async def get_current_user(
 ) -> dict[str, Any]:
     """FastAPI dependency: returns the decoded JWT claims dict.
 
-    - In dev mode (LOG_LEVEL=DEBUG or DEV_MODE=true), an `X-Dev-User-Id`
-      header bypasses JWT verification and synthesizes a minimal claims dict.
-    - Otherwise: requires a valid `Authorization: Bearer <jwt>` header.
+    - In a genuine local-development environment with `DEV_MODE=true`, an
+      `X-Dev-User-Id` header bypasses JWT verification and synthesizes a
+      minimal claims dict (`settings.is_dev`).
+    - Otherwise: requires a valid `Authorization: Bearer <jwt>` header. If
+      the header is present but the environment is not local (production /
+      staging), it is ignored entirely and a warning is logged.
     """
-    if settings.is_dev and x_dev_user_id:
-        return {
-            "sub": x_dev_user_id,
-            "aud": _SUPABASE_AUDIENCE,
-            "role": "authenticated",
-            "dev": True,
-        }
+    if x_dev_user_id:
+        if settings.is_dev:
+            return {
+                "sub": x_dev_user_id,
+                "aud": _SUPABASE_AUDIENCE,
+                "role": "authenticated",
+                "dev": True,
+            }
+        # The dev backdoor is off (non-local environment, or DEV_MODE unset).
+        # Never honour the header — fall through to real JWT verification.
+        log.warning(
+            "dev_user_header_ignored",
+            environment=settings.environment,
+            dev_mode=settings.dev_mode,
+        )
 
     token = _parse_bearer(authorization)
     if not token:

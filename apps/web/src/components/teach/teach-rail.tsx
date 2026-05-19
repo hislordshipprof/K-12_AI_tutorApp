@@ -99,6 +99,15 @@ export function TeachRail() {
           onClick={() => go(it.id)}
         />
       ))}
+      {/* A way back to the student app — lets a teacher preview what their
+          students see (the student dashboard). */}
+      <div className="mt-auto">
+        <RailButton
+          iconName="arrow"
+          label="Student view"
+          onClick={() => router.push('/dashboard')}
+        />
+      </div>
     </aside>
   );
 }

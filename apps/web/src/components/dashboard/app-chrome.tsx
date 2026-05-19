@@ -25,6 +25,7 @@ const SCREEN_TO_ROUTE: Record<Exclude<RailScreen, 'classroom'>, string> = {
   planner: '/planner',
   notes: '/notes',
   history: '/history',
+  teach: '/teach',
   settings: '/settings',
 };
 
@@ -39,12 +40,21 @@ const CRUMBS: Record<string, TopNavCrumb> = {
  * Client-side chrome wrapping every in-app screen.
  *
  * Owns the route-derived breadcrumb + active rail state so the server
- * layout can stay declarative and content-focused.
+ * layout can stay declarative and content-focused. `role` is resolved
+ * server-side in `(app)/layout.tsx` and passed in so the rail can show a
+ * "Teacher board" entry to a teacher/admin only.
  */
-export function AppChrome({ children }: { children: ReactNode }) {
+export function AppChrome({
+  children,
+  role = 'student',
+}: {
+  children: ReactNode;
+  role?: string;
+}) {
   const pathname = usePathname() ?? '/dashboard';
   const router = useRouter();
   const { data: me } = useMe();
+  const isTeacher = role === 'teacher' || role === 'admin';
 
   const { current, crumb } = useMemo(() => {
     const key = Object.keys(ROUTE_TO_SCREEN).find((p) => pathname.startsWith(p));
@@ -67,6 +77,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
       <div className="flex min-h-0 flex-1">
         <Rail
           current={current}
+          showTeacherBoard={isTeacher}
           onNav={async (screen) => {
             if (screen === 'classroom') {
               // Resume lesson — resolve a real topic UUID; fall back to the
