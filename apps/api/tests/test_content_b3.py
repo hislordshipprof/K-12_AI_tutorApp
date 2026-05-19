@@ -453,10 +453,14 @@ async def test_tutor_handle_question_threads_retrieved_chunks_into_socratic(
         state: SessionState,
         question: str,
         retrieved_chunks: list[Any] | None = None,
+        slide_text: str | None = None,
     ) -> AsyncIterator[str]:
         captured_chunks["passed"] = retrieved_chunks
         async for tok in real_respond(
-            state, question, retrieved_chunks=retrieved_chunks
+            state,
+            question,
+            retrieved_chunks=retrieved_chunks,
+            slide_text=slide_text,
         ):
             yield tok
 

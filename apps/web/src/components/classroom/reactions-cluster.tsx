@@ -41,6 +41,13 @@ export const REACTIONS: Reaction[] = [
 
 interface ReactionsClusterProps {
   onReact: (r: Reaction) => void;
+  /**
+   * Optional controlled open state. When provided, the cluster's
+   * visibility is driven by the parent (e.g. the bottom-dock "React"
+   * button); omit both to keep the original self-managed behaviour.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 interface Pop {
@@ -55,8 +62,18 @@ let popSeq = 0;
  * Vertical cluster of reaction buttons on the left edge.
  * Clicking fires the emoji upward via `reaction-fly` CSS animation.
  */
-export function ReactionsCluster({ onReact }: ReactionsClusterProps) {
-  const [open, setOpen] = useState(true);
+export function ReactionsCluster({
+  onReact,
+  open: openProp,
+  onOpenChange,
+}: ReactionsClusterProps) {
+  const [openState, setOpenState] = useState(true);
+  const open = openProp ?? openState;
+  const setOpen = (next: boolean | ((o: boolean) => boolean)) => {
+    const value = typeof next === 'function' ? next(open) : next;
+    if (openProp === undefined) setOpenState(value);
+    onOpenChange?.(value);
+  };
   const [pops, setPops] = useState<Pop[]>([]);
 
   const fire = (r: Reaction) => {

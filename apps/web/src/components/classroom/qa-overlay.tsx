@@ -17,6 +17,10 @@ interface QAOverlayProps {
   /** When set (e.g. from voice mode), auto-ask the given question. */
   initialQ: string | null;
   sessionId: string | null;
+  /** Current lesson step index — anchors Aria's reply to where the student is. */
+  stepIndex: number;
+  /** Text of the slide the student is currently viewing, so Aria has on-screen context. */
+  slideText?: string;
 }
 
 interface SSEPayload {
@@ -44,7 +48,14 @@ const CHIPS = [
  * is null (offline / unauthenticated) we still surface the input UI but
  * skip the stream and show a placeholder.
  */
-export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayProps) {
+export function QAOverlay({
+  active,
+  onClose,
+  initialQ,
+  sessionId,
+  stepIndex,
+  slideText,
+}: QAOverlayProps) {
   const [stage, setStage] = useState<Stage>('input');
   const [q, setQ] = useState('');
   const [scene, setScene] = useState<QAScene | null>(null);
@@ -137,7 +148,12 @@ export function QAOverlay({ active, onClose, initialQ, sessionId }: QAOverlayPro
 
     try {
       const iter = streamSSE<SSEPayload>(`/v1/sessions/${sessionId}/qa`, {
-        json: { question: trimmed, source: 'text' },
+        json: {
+          question: trimmed,
+          source: 'text',
+          step_index: stepIndex,
+          slide_text: slideText,
+        },
         signal: ctl.signal,
       });
       for await (const ev of iter) {

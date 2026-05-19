@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Aria Classroom — Redesign Mockup</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet"/>
+<script>
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        colors: {
+          "outline-variant": "#45464d",
+          "on-surface-variant": "#c6c6cd",
+          "background": "#051424",
+          "tertiary": "#ffb95f",
+          "on-tertiary": "#472a00",
+          "secondary-container": "#00a6e0",
+          "on-secondary-container": "#00374d",
+          "surface-container-high": "#1c2b3c",
+          "on-surface": "#d4e4fa",
+          "surface-container-low": "#0d1c2d",
+          "secondary": "#7bd0ff",
+          "surface-container-highest": "#273647",
+          "error": "#ffb4ab",
+          "surface-variant": "#273647",
+          "primary": "#bec6e0",
+          "primary-container": "#0f172a",
+          "surface": "#051424",
+          "surface-container": "#122131",
+          "outline": "#909097",
+        },
+        fontFamily: { sans: ["Inter", "sans-serif"] },
+      },
+    },
+  };
+</script>
+<style>
+  body { font-family: "Inter", sans-serif; }
+  .grid-bg {
+    background-size: 40px 40px;
+    background-image: radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1px);
+  }
+  .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+  .fill { font-variation-settings: 'FILL' 1, 'wght' 500; }
+  @keyframes pulse-glow {
+    0%   { box-shadow: 0 0 0 0 rgba(255,185,95,0.6); }
+    70%  { box-shadow: 0 0 0 16px rgba(255,185,95,0); }
+    100% { box-shadow: 0 0 0 0 rgba(255,185,95,0); }
+  }
+  .pulse-raise { animation: pulse-glow 2.4s infinite; }
+  @keyframes bounce-dot { 0%,80%,100%{transform:translateY(0);opacity:.4} 40%{transform:translateY(-4px);opacity:1} }
+  .dot { animation: bounce-dot 1.2s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+  .caret { animation: blink 1s step-end infinite; }
+  @keyframes eq { 0%,100%{height:3px} 50%{height:14px} }
+  .eqbar { width:3px; border-radius:2px; background:currentColor; animation:eq .85s ease-in-out infinite; }
+  .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+  .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body class="bg-background text-on-surface h-screen w-screen overflow-hidden flex flex-col grid-bg">
+
+<!-- ───────────────────────── TOP APP BAR ───────────────────────── -->
+<header class="flex justify-between items-center w-full px-6 py-3 z-50 shrink-0">
+
+  <!-- Left: Exit -->
+  <button class="flex items-center gap-2 pl-3 pr-5 py-2.5 rounded-full bg-surface-container-low border border-outline/25 hover:border-error/50 hover:bg-error/10 transition-all text-on-surface-variant hover:text-error">
+    <span class="material-symbols-outlined text-[20px]">chevron_left</span>
+    <span class="text-[13px] font-semibold">Exit lesson</span>
+  </button>
+
+  <!-- Center: Unit info glass pill -->
+  <div class="flex flex-col items-center bg-surface-container/50 backdrop-blur-md border border-white/10 rounded-2xl px-7 py-2 shadow-lg">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-[11px] font-bold tracking-[0.12em] text-tertiary">UNIT 1</span>
+      <span class="text-[12px] text-on-surface-variant">States of Matter &amp; Fluids</span>
+    </div>
+    <!-- Progress dots -->
+    <div class="flex gap-1.5">
+      <div class="w-5 h-1.5 rounded-full bg-secondary"></div>
+      <div class="w-1.5 h-1.5 rounded-full bg-tertiary"></div>
+      <div class="w-1.5 h-1.5 rounded-full bg-surface-variant"></div>
+      <div class="w-1.5 h-1.5 rounded-full bg-surface-variant"></div>
+      <div class="w-1.5 h-1.5 rounded-full bg-surface-variant"></div>
+      <div class="w-1.5 h-1.5 rounded-full bg-surface-variant"></div>
+      <div class="w-1.5 h-1.5 rounded-full bg-surface-variant"></div>
+      <div class="w-1.5 h-1.5 rounded-full bg-surface-variant"></div>
+    </div>
+  </div>
+
+  <!-- Right: Playback + view controls (NO pen here — pen lives in the left rail) -->
+  <div class="flex items-center gap-1.5">
+    <div class="flex items-center gap-1 bg-surface-container-low rounded-full p-1 border border-white/5">
+      <button class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-surface-container-highest transition-colors text-on-surface-variant">
+        <span class="material-symbols-outlined text-[20px]">skip_previous</span>
+      </button>
+      <button class="w-10 h-10 rounded-full bg-tertiary/20 text-tertiary flex items-center justify-center hover:bg-tertiary/30 transition-colors">
+        <span class="material-symbols-outlined fill text-[22px]">pause</span>
+      </button>
+      <button class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-surface-container-highest transition-colors text-on-surface-variant">
+        <span class="material-symbols-outlined text-[20px]">skip_next</span>
+      </button>
+    </div>
+    <button class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center hover:bg-surface-container-highest transition-colors text-on-surface-variant" title="Mute Aria">
+      <span class="material-symbols-outlined text-[20px]">volume_up</span>
+    </button>
+    <!-- Transcript toggle (active) -->
+    <button class="w-10 h-10 rounded-full bg-secondary-container/25 text-secondary flex items-center justify-center hover:bg-secondary-container/35 transition-colors" title="Toggle transcript">
+      <span class="material-symbols-outlined text-[20px]">right_panel_close</span>
+    </button>
+    <!-- Lesson overview -->
+    <button class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center hover:bg-surface-container-highest transition-colors text-on-surface-variant" title="Lesson overview">
+      <span class="material-symbols-outlined text-[20px]">grid_view</span>
+    </button>
+  </div>
+</header>
+
+<!-- ───────────────────────── MAIN ───────────────────────── -->
+<main class="flex-1 flex overflow-hidden px-6 gap-5 pb-28 min-h-0">
+
+  <!-- Left: floating annotation rail -->
+  <nav class="absolute left-7 top-1/2 -translate-y-1/2 z-40 w-14 bg-surface-container/40 backdrop-blur-xl rounded-full py-3 flex flex-col items-center gap-1 border border-white/10 shadow-lg">
+    <button class="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-secondary hover:bg-white/5 transition-all" title="Pen">
+      <span class="material-symbols-outlined text-[21px]">edit</span>
+    </button>
+    <!-- Active tool -->
+    <button class="w-10 h-10 rounded-full flex items-center justify-center bg-secondary-container text-on-secondary-container shadow-[0_0_14px_rgba(0,166,224,0.45)] transition-all" title="Marker">
+      <span class="material-symbols-outlined fill text-[21px]">brush</span>
+    </button>
+    <button class="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-secondary hover:bg-white/5 transition-all" title="Highlighter">
+      <span class="material-symbols-outlined text-[21px]">ink_highlighter</span>
+    </button>
+    <button class="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-secondary hover:bg-white/5 transition-all" title="Eraser">
+      <span class="material-symbols-outlined text-[21px]">ink_eraser</span>
+    </button>
+    <div class="w-6 h-px bg-white/10 my-1"></div>
+    <!-- Colour swatch -->
+    <button class="w-7 h-7 rounded-full bg-tertiary ring-2 ring-white/40" title="Colour"></button>
+    <button class="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-error hover:bg-white/5 transition-all" title="Clear board">
+      <span class="material-symbols-outlined text-[21px]">delete</span>
+    </button>
+  </nav>
+
+  <!-- Center: slide -->
+  <section class="flex-1 ml-16 bg-white text-gray-900 rounded-2xl overflow-hidden shadow-2xl relative flex flex-col justify-center items-center p-10 min-w-0">
+    <div class="max-w-3xl w-full">
+      <div class="flex justify-between items-start mb-6">
+        <div>
+          <h1 class="text-3xl font-bold text-blue-600 mb-4">States of Matter</h1>
+          <p class="text-lg leading-relaxed font-medium">
+            Without using the words solid, liquid or gas, describe the difference between ice, water and steam to someone who has never seen them
+            (<span class="text-red-600 font-bold">2 min — turn and talk to your partner</span>)
+          </p>
+        </div>
+        <div class="w-20 h-20 bg-orange-400 rounded-full flex items-center justify-center shrink-0 border-4 border-orange-200">
+          <span class="material-symbols-outlined fill text-white text-4xl">emoji_objects</span>
+        </div>
+      </div>
+      <p class="text-xl text-center mb-8 font-medium">
+        The 3 states of matter can be distinguished at a <span class="font-bold">macroscopic level:</span>
+      </p>
+      <div class="grid grid-cols-3 gap-6 text-center">
+        <div class="flex flex-col items-center">
+          <div class="h-36 flex items-end justify-center mb-3">
+            <div class="w-24 h-32 border-2 border-gray-300 rounded-b-xl border-t-0 bg-gray-50 relative">
+              <div class="absolute inset-x-0 bottom-2 flex flex-wrap justify-center gap-1 p-1.5">
+                <span class="w-5 h-5 rounded-full bg-red-600"></span><span class="w-5 h-5 rounded-full bg-red-600"></span>
+                <span class="w-5 h-5 rounded-full bg-red-600"></span><span class="w-5 h-5 rounded-full bg-red-600"></span>
+                <span class="w-5 h-5 rounded-full bg-red-600"></span><span class="w-5 h-5 rounded-full bg-red-600"></span>
+                <span class="w-5 h-5 rounded-full bg-red-600"></span><span class="w-5 h-5 rounded-full bg-red-600"></span>
+              </div>
+            </div>
+          </div>
+          <h3 class="text-xl font-bold text-red-600 mb-2">Solid</h3>
+          <p class="text-sm">Particles in <b>fixed positions</b> that <b>vibrate</b>. Interparticle forces are <b>large</b>.</p>
+        </div>
+        <div class="flex flex-col items-center">
+          <div class="h-36 flex items-end justify-center mb-3">
+            <div class="w-24 h-32 border-2 border-gray-300 rounded-b-xl border-t-0 bg-blue-50 relative overflow-hidden">
+              <div class="absolute inset-x-0 bottom-0 h-20 bg-blue-200/60"></div>
+              <div class="absolute inset-0 flex flex-wrap justify-center content-end gap-1 p-1.5 pb-3">
+                <span class="w-4 h-4 rounded-full bg-blue-400"></span><span class="w-4 h-4 rounded-full bg-blue-400"></span>
+                <span class="w-4 h-4 rounded-full bg-blue-400"></span><span class="w-4 h-4 rounded-full bg-blue-400"></span>
+                <span class="w-4 h-4 rounded-full bg-blue-400"></span><span class="w-4 h-4 rounded-full bg-blue-400"></span>
+                <span class="w-4 h-4 rounded-full bg-blue-400"></span><span class="w-4 h-4 rounded-full bg-blue-400"></span>
+              </div>
+            </div>
+          </div>
+          <h3 class="text-xl font-bold text-red-600 mb-2">Liquid</h3>
+          <p class="text-sm">Particles <b>further apart</b> and <b>free to move</b>. Forces <b>weaker</b> than a solid.</p>
+        </div>
+        <div class="flex flex-col items-center">
+          <div class="h-36 flex items-end justify-center mb-3">
+            <div class="w-24 h-32 border-2 border-gray-300 rounded-b-xl border-t-0 relative">
+              <span class="absolute top-2 left-3 w-3.5 h-3.5 rounded-full bg-green-500"></span>
+              <span class="absolute top-10 right-4 w-3.5 h-3.5 rounded-full bg-green-500"></span>
+              <span class="absolute bottom-6 left-5 w-3.5 h-3.5 rounded-full bg-green-500"></span>
+              <span class="absolute bottom-12 right-3 w-3.5 h-3.5 rounded-full bg-green-500"></span>
+              <span class="absolute top-16 left-3 w-3.5 h-3.5 rounded-full bg-green-500"></span>
+              <span class="absolute bottom-3 right-6 w-3.5 h-3.5 rounded-full bg-green-500"></span>
+            </div>
+          </div>
+          <h3 class="text-xl font-bold text-red-600 mb-2">Gas</h3>
+          <p class="text-sm">Particles <b>much further apart</b>, moving <b>freely</b>. Forces are <b>negligible</b>.</p>
+        </div>
+      </div>
+    </div>
+    <!-- slide page indicator -->
+    <div class="absolute bottom-4 right-5 text-xs text-gray-400 font-medium">Step 2 / 8</div>
+  </section>
+
+  <!-- Right: live transcript -->
+  <aside class="w-[340px] bg-surface-container-high/45 backdrop-blur-md rounded-2xl border border-white/10 flex flex-col overflow-hidden shadow-xl shrink-0">
+    <!-- header -->
+    <div class="px-4 py-3 border-b border-white/5 bg-surface-container-highest/40 flex items-center gap-3">
+      <div class="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center relative shrink-0">
+        <span class="material-symbols-outlined fill text-white text-[20px]">school</span>
+        <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 border-2 border-surface-container-highest rounded-full"></span>
+      </div>
+      <div class="flex-1 min-w-0">
+        <h2 class="text-[11px] font-bold tracking-[0.1em] text-tertiary">PROF. ARIA</h2>
+        <p class="text-[11px] text-on-surface-variant flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span> Live transcript
+        </p>
+      </div>
+      <button class="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-white/5" title="Collapse">
+        <span class="material-symbols-outlined text-[18px]">right_panel_open</span>
+      </button>
+    </div>
+
+    <!-- messages — both Aria and the student stream in live -->
+    <div class="flex-1 overflow-y-auto p-4 space-y-5 custom-scrollbar min-h-0">
+      <!-- earlier Aria turn (settled) -->
+      <div class="opacity-60">
+        <span class="text-[10px] text-on-surface-variant font-semibold tracking-wide">10:02 · ARIA</span>
+        <div class="mt-1.5 bg-surface-container-low p-3 rounded-xl rounded-tl-sm border border-white/5">
+          <p class="text-[14px] leading-[22px]">Welcome back. Without using the words solid, liquid or gas — describe the difference between ice, water and steam.</p>
+        </div>
+      </div>
+      <!-- student turn (settled — captured from their speech) -->
+      <div class="opacity-80">
+        <div class="flex items-center justify-end gap-1.5 mb-1.5">
+          <span class="text-[10px] text-secondary font-semibold tracking-wide">YOU · 10:05</span>
+        </div>
+        <div class="bg-secondary-container/12 p-3 rounded-xl rounded-tr-sm border border-secondary/20">
+          <p class="text-[14px] leading-[22px]">Ice is hard and cold, you can hold it in your hand. Water just flows through your fingers, and steam floats away and disappears.</p>
+        </div>
+      </div>
+      <!-- current Aria turn — streaming in live as she speaks -->
+      <div>
+        <div class="flex items-center gap-1.5 mb-1.5">
+          <span class="text-[10px] text-tertiary font-bold tracking-wide">ARIA · NOW</span>
+          <span class="flex items-end gap-0.5 h-2.5 text-tertiary">
+            <span class="eqbar"></span>
+            <span class="eqbar" style="animation-delay:.2s"></span>
+            <span class="eqbar" style="animation-delay:.4s"></span>
+          </span>
+        </div>
+        <div class="bg-tertiary/10 p-3 rounded-xl rounded-tl-sm border-l-[3px] border-tertiary">
+          <p class="text-[14px] leading-[22px] font-medium">That's a wonderful description — you used what you can feel and see. What you just described as "hard" is really the particles being locked in place<span class="caret text-tertiary font-bold">▍</span></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- live status footer — flips between Aria speaking / listening for you -->
+    <div class="px-4 py-3 border-t border-white/5 bg-surface-container-highest/30 flex items-center gap-2 text-tertiary">
+      <span class="material-symbols-outlined text-[18px]">graphic_eq</span>
+      <span class="text-[11px] font-bold tracking-[0.08em]">ARIA SPEAKING</span>
+      <span class="ml-auto flex items-end gap-0.5 h-3.5">
+        <span class="eqbar"></span>
+        <span class="eqbar" style="animation-delay:.15s"></span>
+        <span class="eqbar" style="animation-delay:.3s"></span>
+        <span class="eqbar" style="animation-delay:.1s"></span>
+      </span>
+    </div>
+  </aside>
+</main>
+
+<!-- ───────────────────────── BOTTOM DOCK ───────────────────────── -->
+<footer class="fixed bottom-0 left-0 w-full z-50 flex justify-center pb-6 px-6">
+  <div class="flex items-center gap-2.5 bg-surface-container/55 backdrop-blur-xl rounded-2xl p-2.5 border border-white/10 shadow-2xl">
+
+    <!-- secondary: text Q&A -->
+    <button class="flex flex-col items-center justify-center gap-0.5 w-[68px] h-16 rounded-xl hover:bg-white/5 transition-all text-on-surface-variant hover:text-on-surface">
+      <span class="material-symbols-outlined text-[22px]">chat_bubble</span>
+      <span class="text-[11px] font-semibold">Chat</span>
+    </button>
+    <!-- secondary: quiz me -->
+    <button class="flex flex-col items-center justify-center gap-0.5 w-[68px] h-16 rounded-xl hover:bg-white/5 transition-all text-on-surface-variant hover:text-on-surface">
+      <span class="material-symbols-outlined text-[22px]">bolt</span>
+      <span class="text-[11px] font-semibold">Quiz me</span>
+    </button>
+
+    <div class="w-px h-10 bg-white/10 mx-1"></div>
+
+    <!-- PRIMARY: raise hand / talk to Aria -->
+    <button class="flex items-center gap-3 pl-6 pr-7 h-16 rounded-xl bg-tertiary text-on-tertiary pulse-raise hover:brightness-110 transition-all shadow-[0_0_28px_rgba(255,185,95,0.35)]">
+      <span class="material-symbols-outlined fill text-[28px]">pan_tool</span>
+      <span class="flex flex-col items-start leading-tight">
+        <span class="text-[14px] font-bold">Raise hand</span>
+        <span class="text-[10px] opacity-75 font-medium">Hold Space to talk</span>
+      </span>
+    </button>
+
+    <div class="w-px h-10 bg-white/10 mx-1"></div>
+
+    <!-- secondary: reactions -->
+    <button class="flex flex-col items-center justify-center gap-0.5 w-[68px] h-16 rounded-xl hover:bg-white/5 transition-all text-on-surface-variant hover:text-on-surface">
+      <span class="material-symbols-outlined text-[22px]">mood</span>
+      <span class="text-[11px] font-semibold">React</span>
+    </button>
+    <!-- secondary: mic mute -->
+    <button class="flex flex-col items-center justify-center gap-0.5 w-[68px] h-16 rounded-xl bg-secondary-container/15 hover:bg-secondary-container/25 transition-all text-secondary">
+      <span class="material-symbols-outlined text-[22px]">mic</span>
+      <span class="text-[11px] font-semibold">Mic on</span>
+    </button>
+  </div>
+</footer>
+
+</body>
+</html>

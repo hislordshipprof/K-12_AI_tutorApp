@@ -19,7 +19,11 @@ chat share one voice.
 
 from __future__ import annotations
 
-from app.agents.prompts import ARIA_BASE_PERSONA, SOCRATIC_RULES
+from app.agents.prompts import (
+    ARIA_BASE_PERSONA,
+    SOCRATIC_RULES,
+    _format_slide_context,
+)
 from app.agents.state import SessionState
 from app.content.chunker import Chunk
 
@@ -197,12 +201,17 @@ def RAG_QUESTION_PROMPT(
     state: SessionState,
     question: str,
     retrieved_chunks: list[Chunk],
+    slide_text: str | None = None,
 ) -> str:
     """User-slot prompt for a free-form question with RAG context.
 
     When ``retrieved_chunks`` is empty, the caller (B3) should fall back to
     the existing ``QUESTION_PROMPT`` path — this prompt assumes at least one
     passage is present and tells the model to anchor on it.
+
+    ``slide_text`` is the plain text of the slide the student is currently
+    viewing — when present it is folded in as a labelled section so Aria can
+    answer questions about what is on screen.
     """
     topic = state.topic_name or state.topic_id or "(unspecified)"
     signals = state.student_signals or {}
@@ -210,6 +219,7 @@ def RAG_QUESTION_PROMPT(
 
     return (
         f"{SOCRATIC_RULES}\n\n"
+        f"{_format_slide_context(slide_text)}"
         "SOURCE PASSAGES (these are what we just covered — anchor your "
         "reply here, not generic knowledge):\n"
         f"{_format_rag_chunks(retrieved_chunks)}\n\n"

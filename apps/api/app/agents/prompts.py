@@ -215,6 +215,25 @@ def _format_history(state: SessionState, max_turns: int = 3) -> str:
     return "\n".join(lines)
 
 
+def _format_slide_context(slide_text: str | None) -> str:
+    """Render the current slide's text as a labelled prompt block.
+
+    Returns an empty string when no slide text is supplied, so callers can
+    splice it in unconditionally without a trailing blank section.
+    """
+    text = (slide_text or "").strip()
+    if not text:
+        return ""
+    # Keep the prompt budget sane — the slide text is short by design, but
+    # guard against an unusually long step's html.
+    if len(text) > 1200:
+        text = text[:1200].rstrip() + "…"
+    return (
+        "The student is currently viewing this slide:\n"
+        f"{text}\n\n"
+    )
+
+
 def _format_context_header(state: SessionState) -> str:
     """Common 'where are we' summary used by both question and reply prompts."""
     topic = state.topic_name or state.topic_id or "(unspecified)"
@@ -233,14 +252,21 @@ def _format_context_header(state: SessionState) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Prompt builders
 # ─────────────────────────────────────────────────────────────────────────────
-def QUESTION_PROMPT(state: SessionState, question: str) -> str:
+def QUESTION_PROMPT(
+    state: SessionState, question: str, slide_text: str | None = None
+) -> str:
     """Build the user-slot prompt for a free-form student question.
 
     The system slot is expected to be ``ARIA_BASE_PERSONA``; the rules and
     context live in the user message so they're easy to inspect in logs.
+
+    ``slide_text`` is the plain text of the slide the student is currently
+    looking at — when present it is folded in as a labelled section so Aria
+    can answer questions about what is on screen.
     """
     return (
         f"{SOCRATIC_RULES}\n\n"
+        f"{_format_slide_context(slide_text)}"
         f"{_format_context_header(state)}\n\n"
         f"The student just asked: \"{question.strip()}\"\n\n"
         "Respond Socratically — guide them toward the answer with ONE small "

@@ -18,6 +18,7 @@ Design notes
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncGenerator
 from typing import Any
 from uuid import UUID
@@ -38,6 +39,19 @@ log = get_logger(__name__)
 def _session_key(session_id: Any) -> str:
     """Normalize a session-id to a string key for our in-memory cache."""
     return str(session_id)
+
+
+# Lesson ``html`` carries presentation tags (``<span class="hl-*">``, ``<em>``,
+# ``<strong>``, ``<code>``) — the prompt builders want plain text, so we strip
+# tags before threading slide text into a prompt.
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text: str | None) -> str:
+    """Strip HTML tags from slide text and collapse whitespace."""
+    if not text:
+        return ""
+    return " ".join(_HTML_TAG_RE.sub(" ", text).split())
 
 
 def _supabase_available() -> bool:
@@ -223,6 +237,8 @@ class TutorAgent:
         question: str,
         source: str = "text",
         topic_id: str | None = None,
+        step_index: int | None = None,
+        slide_text: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream Aria's Socratic response to a free-form question.
 
@@ -231,15 +247,28 @@ class TutorAgent:
         retriever returns ``[]`` (and logs a warning) on any failure, so the
         downstream call gracefully falls back to the non-RAG prompt path.
 
+        When ``step_index`` is supplied, ``state.step_idx`` is updated BEFORE
+        the RAG fetch so the retriever's temporal anchor matches the slide
+        the student is actually viewing. ``slide_text`` (the on-screen slide
+        text) is threaded into the prompt so Aria can answer questions about
+        what is currently on screen.
+
         Records the full transcript turn after streaming completes.
         """
         state = await self.get_or_init_state(session_id, user_id, topic_id=topic_id)
+
+        # Anchor the session to the student's current slide before retrieval.
+        if step_index is not None:
+            state.step_idx = step_index
 
         retrieved = await self._fetch_rag_context(state, question)
 
         collected: list[str] = []
         async for token in self.socratic.respond_to_question(
-            state, question, retrieved_chunks=retrieved
+            state,
+            question,
+            retrieved_chunks=retrieved,
+            slide_text=_strip_html(slide_text),
         ):
             collected.append(token)
             yield token

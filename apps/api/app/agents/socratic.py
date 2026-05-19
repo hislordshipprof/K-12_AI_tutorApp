@@ -51,20 +51,27 @@ class SocraticAgent:
         state: SessionState,
         question: str,
         retrieved_chunks: list[Any] | None = None,
+        slide_text: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream tokens for a free-form student question.
 
         When ``retrieved_chunks`` is a non-empty list, the prompt is built
         via ``RAG_QUESTION_PROMPT`` so Aria's nudge is grounded in literal
         source material. Otherwise the legacy ``QUESTION_PROMPT`` path runs.
+
+        ``slide_text`` (plain text of the slide the student is currently
+        viewing) is folded into either prompt so Aria can answer questions
+        about what is on screen.
         """
         if retrieved_chunks:
             from app.content.prompts import RAG_QUESTION_PROMPT
 
-            prompt = RAG_QUESTION_PROMPT(state, question, retrieved_chunks)
+            prompt = RAG_QUESTION_PROMPT(
+                state, question, retrieved_chunks, slide_text=slide_text
+            )
             rag_used = True
         else:
-            prompt = QUESTION_PROMPT(state, question)
+            prompt = QUESTION_PROMPT(state, question, slide_text=slide_text)
             rag_used = False
         log.debug(
             "socratic_question_prompt",

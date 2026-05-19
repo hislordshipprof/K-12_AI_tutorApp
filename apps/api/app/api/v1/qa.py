@@ -48,6 +48,21 @@ class QAStreamRequest(BaseModel):
             "initialising state for a brand-new session."
         ),
     )
+    step_index: int | None = Field(
+        default=None,
+        description=(
+            "Lesson step the student is currently viewing. Anchors the "
+            "agent's RAG retrieval and prompt to the right moment."
+        ),
+    )
+    slide_text: str | None = Field(
+        default=None,
+        max_length=8000,
+        description=(
+            "Text of the slide the student is currently looking at, so "
+            "Aria can answer questions about what is on screen."
+        ),
+    )
 
 
 def _sse(payload: dict[str, Any]) -> str:
@@ -94,6 +109,8 @@ async def ask_question(
                 question=body.question,
                 source=body.source,
                 topic_id=body.topic_id,
+                step_index=body.step_index,
+                slide_text=body.slide_text,
             ):
                 # Cost-leak guard: stop pulling Gemini tokens the moment the
                 # SSE client disconnects. Breaking out of the loop calls the
