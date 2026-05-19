@@ -15,7 +15,7 @@
     "db:reset": "supabase db reset",
     "db:diff": "supabase db diff",
     "db:push": "supabase db push",
-    "api:dev": "cd apps/api && (test -d .venv || python3 -m venv .venv) && .venv/bin/pip install -e . -q && DEV_MODE=true .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "api:dev": "node scripts/api-dev.mjs",
     "api:test": "cd apps/api && .venv/bin/pytest -q",
     "web:dev": "cd apps/web && pnpm dev",
     "verify": "bash scripts/verify-all.sh"
