@@ -302,6 +302,21 @@ class VoiceBridge:
                         )
                     server_content = getattr(response, "server_content", None)
                     if server_content is not None:
+                        # Live transcription of the *student's* speech —
+                        # enabled via `input_audio_transcription` in the
+                        # session config. Gemini surfaces it incrementally
+                        # as `input_transcription.text` fragments; relay
+                        # each one as a `transcript` frame so the classroom
+                        # can track what the student is saying in real time.
+                        input_tx = getattr(
+                            server_content, "input_transcription", None
+                        )
+                        tx_text = getattr(input_tx, "text", None)
+                        if tx_text:
+                            await self._send_client(
+                                client_ws,
+                                {"type": "transcript", "text": tx_text},
+                            )
                         # Gemini Live signals barge-in with `interrupted=True`
                         # on the same payload that delivered the
                         # already-emitted text/audio. The client MUST flush

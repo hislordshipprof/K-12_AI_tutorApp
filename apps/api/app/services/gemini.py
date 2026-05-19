@@ -444,6 +444,11 @@ class GeminiService:
 
         cfg: dict[str, Any] = {
             "response_modalities": response_modalities or ["AUDIO"],
+            # Stream a live transcript of the student's speech — Gemini Live
+            # surfaces it as `input_transcription` on each response's
+            # `server_content`; the voice bridge relays it as `transcript`
+            # frames so the classroom can show what the student is saying.
+            "input_audio_transcription": {},
         }
         if system_instruction:
             cfg["system_instruction"] = system_instruction

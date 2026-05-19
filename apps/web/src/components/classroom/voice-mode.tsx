@@ -165,9 +165,11 @@ export function VoiceMode({
   const micRef = useRef<MicResources | null>(null);
 
   const handleTranscript = useCallback((text: string) => {
-    // Server-side transcripts are streaming fragments; append rather than replace
-    // so the UI accumulates the full turn like the old SpeechRecognition path did.
-    setTranscript((prev) => (prev ? `${prev} ${text}` : text).trim());
+    // Gemini Live emits `input_transcription` as streaming fragments that
+    // already carry their own leading spaces/punctuation — concatenate raw
+    // so the accumulated turn reads naturally (joining with extra spaces
+    // would break mid-word splits like " phys" + "ics").
+    setTranscript((prev) => prev + text);
   }, []);
 
   const live = useGeminiLive({
