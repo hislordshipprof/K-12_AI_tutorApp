@@ -76,13 +76,12 @@ async function bootstrapMic(
       // ignore — the worklet will simply produce no output until resumed
     }
   }
-  // The capture worklet is a TS file in `src/audio` — Next compiles it to
-  // a bundle URL via `new URL(... import.meta.url)`. This keeps the file
-  // co-located with the rest of the audio plumbing while still resolving
-  // correctly under Turbopack and `next build`.
-  await ctx.audioWorklet.addModule(
-    new URL('@/audio/capture-worklet', import.meta.url),
-  );
+  // The capture worklet is served as a static asset from `/public`
+  // (`public/capture-worklet.js`). An AudioWorklet module must be plain
+  // browser JS loaded from a real URL — bundling a `.ts` worklet via
+  // `new URL(..., import.meta.url)` does not resolve reliably under
+  // Turbopack (it failed with "Unable to load a worklet's module").
+  await ctx.audioWorklet.addModule('/capture-worklet.js');
 
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -208,9 +207,11 @@ export function VoiceMode({
           // The capture worklet transfers Int16 buffers; forward straight through.
           live.pushAudio(pcm);
         });
-      } catch {
-        // getUserMedia denied or unavailable — the overlay still works as a
-        // visual surface, but no audio will be sent. We don't crash here.
+      } catch (e) {
+        // getUserMedia denied / unavailable, or the capture worklet failed
+        // to load — the overlay still works as a visual surface, but no
+        // audio is sent. Surface the cause instead of failing silently.
+        console.error('[voice] microphone capture failed to start:', e);
       }
     })();
 

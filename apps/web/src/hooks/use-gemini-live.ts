@@ -11,7 +11,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/client';
  *
  * This hook replaces the browser `SpeechRecognition` pathway. It opens a
  * single WS to the backend, which proxies frames to/from Gemini Live. The
- * mic worklet (see `apps/web/src/audio/capture-worklet.ts`) hands us Int16
+ * mic worklet (see `apps/web/public/capture-worklet.js`) hands us Int16
  * PCM chunks at 16 kHz; we forward each via `pushAudio` as a base64-encoded
  * `{"type":"audio"}` frame. Inbound `{"type":"audio"}` frames are decoded
  * and pushed to the playback worklet via `audioChunk$` (Float32 PCM 24k).

@@ -1,57 +1,41 @@
 /**
  * AudioWorkletProcessor — microphone capture, downsampled to 16 kHz PCM mono.
  *
+ * Served as a static asset from `/public` so `AudioWorklet.addModule()`
+ * loads it verbatim — an AudioWorklet module must be plain browser JS, and
+ * bundling a `.ts` worklet via `new URL(..., import.meta.url)` does not
+ * reliably resolve under Turbopack (it failed with "Unable to load a
+ * worklet's module"). Keep this file plain JS — no TypeScript, no imports.
+ *
  * Reads `inputs[0][0]` (the mic Float32 stream at the AudioContext rate,
- * typically 44.1 or 48 kHz) and decimates to 16 kHz using a simple boxcar
- * average. Emits Int16 PCM in ~100 ms chunks via:
- *
- *   { type: "pcm16", samples: Int16Array }
- *
- * Status (A2): defined; consumed by A3's `useGeminiLive` hook.
+ * typically 44.1 or 48 kHz) and decimates to 16 kHz with a boxcar average.
+ * Emits Int16 PCM in ~100 ms chunks via: { type: "pcm16", samples }.
  */
-
-/// <reference lib="webworker" />
-
-declare const sampleRate: number;
-declare function registerProcessor(
-  name: string,
-  ctor: new (options?: AudioWorkletNodeOptions) => AudioWorkletProcessor,
-): void;
-
-declare class AudioWorkletProcessor {
-  readonly port: MessagePort;
-  constructor(options?: AudioWorkletNodeOptions);
-  process(
-    inputs: Float32Array[][],
-    outputs: Float32Array[][],
-    parameters: Record<string, Float32Array>,
-  ): boolean;
-}
 
 const TARGET_SAMPLE_RATE = 16000;
 const CHUNK_MS = 100;
-const TARGET_SAMPLES_PER_CHUNK = Math.round((TARGET_SAMPLE_RATE * CHUNK_MS) / 1000); // 1600
+const TARGET_SAMPLES_PER_CHUNK = Math.round(
+  (TARGET_SAMPLE_RATE * CHUNK_MS) / 1000,
+); // 1600
 
 class CaptureProcessor extends AudioWorkletProcessor {
-  private readonly decimation: number;
-  private accumulator = 0;
-  private accumulatedCount = 0;
-  private chunk: Int16Array;
-  private chunkOffset = 0;
-
   constructor() {
     super();
-    // e.g. sampleRate=48000 → decimation=3
+    // e.g. sampleRate=48000 → decimation=3. `sampleRate` is an
+    // AudioWorkletGlobalScope global.
     this.decimation = Math.max(1, Math.round(sampleRate / TARGET_SAMPLE_RATE));
+    this.accumulator = 0;
+    this.accumulatedCount = 0;
     this.chunk = new Int16Array(TARGET_SAMPLES_PER_CHUNK);
+    this.chunkOffset = 0;
   }
 
-  override process(inputs: Float32Array[][]): boolean {
-    const input = inputs[0]?.[0];
+  process(inputs) {
+    const input = inputs[0] && inputs[0][0];
     if (!input || input.length === 0) return true;
 
     for (let i = 0; i < input.length; i++) {
-      this.accumulator += input[i]!;
+      this.accumulator += input[i];
       this.accumulatedCount++;
       if (this.accumulatedCount >= this.decimation) {
         const avg = this.accumulator / this.accumulatedCount;
@@ -75,5 +59,3 @@ class CaptureProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor('capture-processor', CaptureProcessor);
-
-export {};
